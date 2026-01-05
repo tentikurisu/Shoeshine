@@ -4,8 +4,12 @@ Shoeshine Basic Usage Example
 
 This example demonstrates basic usage of the Shoeshine API.
 
+Prerequisites:
+1. Start Shoeshine API: python api_server.py
+
 Usage:
-    python examples/basic_usage.py document.jpg
+    python examples/basic_usage.py extract data/raw/doc_00000_9795.jpg
+    python examples/basic_usage.py bbox data/raw/doc_00000_9795.jpg
 """
 
 import base64
@@ -56,8 +60,8 @@ def print_usage():
     print("  bbox       - Extract text with bounding boxes")
     print("  help       - Show this help message")
     print("\nExamples:")
-    print(f"  {sys.argv[0]} document.jpg extract")
-    print(f"  {sys.argv[0]} receipt.png bbox")
+    print(f"  {sys.argv[0]} extract data/raw/doc_00000_9795.jpg")
+    print(f"  {sys.argv[0]} bbox data/raw/doc_00000_9795.jpg")
     print("\nAPI Endpoints:")
     print("  POST /extract/text   - Extract plain text")
     print("  POST /extract/bbox   - Extract with bounding boxes")
@@ -67,7 +71,7 @@ def print_usage():
 
 
 def main():
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 3:
         print_usage()
         sys.exit(1)
 

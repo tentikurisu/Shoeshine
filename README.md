@@ -51,6 +51,10 @@ docker compose up --build
 # In another terminal, test it
 curl http://localhost:8000/health
 
+# Or visit interactive documentation
+# http://localhost:8000/docs - Swagger UI
+# http://localhost:8000/redoc - ReDoc
+
 # Extract text from a document
 curl -X POST http://localhost:8000/extract/text \
   -F "document=@path/to/your-document.jpg"
@@ -72,6 +76,10 @@ python -m venv .venv
 
 # Start server
 python api_server.py
+
+# Visit interactive documentation
+# http://localhost:8000/docs - Swagger UI
+# http://localhost:8000/redoc - ReDoc
 
 # Or with debug mode
 python api_server.py --host 0.0.0.0 --port 8000
@@ -104,6 +112,19 @@ SHOESHINE_OLLAMA_URL=http://host.docker.internal:11434 docker compose up -d
 ### Authentication
 
 All endpoints accept an optional `X-API-Key` header for authentication. Configure via the `SHOESHINE_API_KEY` environment variable.
+
+### Interactive API Documentation
+
+Shoeshine includes automatic interactive documentation powered by FastAPI:
+
+- **Swagger UI**: http://localhost:8000/docs
+  - Interactive web interface to try all API endpoints
+  - View request/response schemas
+  - Execute requests directly from your browser
+
+- **ReDoc**: http://localhost:8000/redoc
+  - Clean, developer-friendly API documentation
+  - Readable API reference
 
 ### Example Requests
 
@@ -204,9 +225,21 @@ response = requests.post(
 print(response.json()["message"]["content"])
 ```
 
+**Prerequisites before running example:**
+```bash
+# 1. Start Shoeshine API server
+python api_server.py
+
+# 2. Start Ollama (if not already running)
+ollama serve
+
+# 3. Pull the model (if not already downloaded)
+ollama pull llama3
+```
+
 **Run example:**
 ```bash
-# First, use the sample document from the repository
+# First, use sample document from repository
 python examples/ollama_integration.py data/raw/doc_00000_9795.jpg "What is the account number?"
 ```
 
@@ -242,6 +275,15 @@ response = bedrock.converse(
 )
 
 print(response["output"]["message"]["content"][0]["text"])
+```
+
+**Prerequisites before running example:**
+```bash
+# Start Shoeshine API server
+python api_server.py
+
+# Ensure AWS credentials are configured
+aws configure
 ```
 
 ---
@@ -397,6 +439,55 @@ See [PRIVACY.md](PRIVACY.md) for detailed privacy guarantees and security measur
 - **Optional Authentication**: API key or IAM-based auth
 - **Input Validation**: File type verification, size limits
 - **Audit Logging**: Only metadata is logged, not document contents
+
+---
+
+## Troubleshooting
+
+### Connection Refused Error
+
+**Error:** `Connection refused` or `No connection could be made because target machine actively refused it`
+
+**Solution:** Start the Shoeshine API server first:
+```bash
+# Terminal 1: Start Shoeshine server
+python api_server.py
+
+# Terminal 2: Run your examples
+python examples/ollama_integration.py data/raw/doc_00000_9795.jpg "What is the account number?"
+```
+
+### OCR Initialization Failed
+
+**Error:** `EasyOCR initialization failed` or `OCR not available`
+
+**Solutions:**
+1. EasyOCR downloads models on first run (~300MB). Ensure you have internet connection.
+2. Check that you have enough disk space.
+3. If using Tesseract, install it system-wide:
+   - Windows: [Download from UB-Mannheim](https://github.com/UB-Mannheim/tesseract/wiki)
+   - macOS: `brew install tesseract`
+   - Linux: `sudo apt-get install tesseract-ocr`
+
+### Ollama Connection Failed
+
+**Error:** `Failed to connect to Ollama` or harvest endpoint returns 503
+
+**Solutions:**
+1. Start Ollama: `ollama serve`
+2. Check Ollama is running: `curl http://localhost:11434/api/tags`
+3. Pull required model: `ollama pull llama3`
+4. Set environment variable if using custom URL: `export SHOESHINE_OLLAMA_URL=http://your-url:11434`
+
+### AWS Bedrock Errors
+
+**Error:** `AccessDenied` or `ValidationException`
+
+**Solutions:**
+1. Configure AWS credentials: `aws configure`
+2. Ensure your AWS account has Bedrock access enabled in the region
+3. Verify the model ID is available in your region (e.g., `anthropic.claude-sonnet-4-20250507`)
+4. Check IAM permissions include `bedrock:InvokeModel`
 
 ---
 
