@@ -32,7 +32,7 @@ aws configure
 # OR
 export AWS_ACCESS_KEY_ID="your-access-key"
 export AWS_SECRET_ACCESS_KEY="your-secret-key"
-export AWS_DEFAULT_REGION="us-east-1"
+export AWS_DEFAULT_REGION="eu-west-1"
 ```
 
 ---
@@ -54,8 +54,12 @@ Ensure Bedrock is available in your region and you have access:
 
 ```bash
 # Check available Bedrock models
-aws bedrock list-foundation-models --region us-east-1
+aws bedrock list-foundation-models --region eu-west-1
 ```
+
+> **Note:** The following sections describe optional Terraform backend configuration for team deployments.
+> For single-user deployments, Terraform's local state backend is sufficient.
+> Skip to [Building the Lambda Container](#building-the-lambda-container) if deploying alone.
 
 ### 3. (Optional) Create S3 Bucket for Terraform State
 
@@ -115,27 +119,42 @@ curl http://localhost:8080/health
 
 ```bash
 # Get login password
-aws ecr get-login-password --region us-east-1 | \
+aws ecr get-login-password --region eu-west-1 | \
   docker login --username AWS --password-stdin \
-  <account-id>.dkr.ecr.us-east-1.amazonaws.com
+  <account-id>.dkr.ecr.eu-west-1.amazonaws.com
 
 # Tag the image
 docker tag shoeshine-lambda:latest \
-  <account-id>.dkr.ecr.us-east-1.amazonaws.com/shoeshine:latest
+  <account-id>.dkr.ecr.eu-west-1.amazonaws.com/shoeshine:latest
 
 # Push to ECR
-docker push <account-id>.dkr.ecr.us-east-1.amazonaws.com/shoeshine:latest
+docker push <account-id>.dkr.ecr.eu-west-1.amazonaws.com/shoeshine:latest
 ```
 
 ### 4. Note the Image URI
 
 ```
-<account-id>.dkr.ecr.us-east-1.amazonaws.com/shoeshine:latest
+<account-id>.dkr.ecr.eu-west-1.amazonaws.com/shoeshine:latest
 ```
 
 ---
 
 ## Terraform Deployment
+
+### API Gateway Type
+
+This deployment uses **API Gateway v2 (HTTP API)** which provides:
+- Lower cost: $1.00 per 1M requests
+- Built-in CORS support
+- Simpler setup
+- Better performance
+
+If you need REST API v1 features (custom authorizers, WAF integration, etc.), modify `terraform/main.tf` line 226:
+
+```hcl
+protocol_type = "HTTP"  # Current (HTTP API v2)
+# protocol_type = "REST"  # Alternative (REST API v1, $3.50 per 1M requests)
+```
 
 ### 1. Initialize Terraform
 
@@ -152,7 +171,7 @@ Create a `terraform.tfvars` file:
 
 ```hcl
 # AWS Region
-aws_region = "us-east-1"
+aws_region = "eu-west-1"
 
 # Environment
 environment = "production"
@@ -160,21 +179,21 @@ environment = "production"
 # API Key (generate with: openssl rand -base64 32)
 api_key = "your-secure-api-key-here"
 
-# Lambda Container Image URI
-lambda_image_uri = "<account-id>.dkr.ecr.us-east-1.amazonaws.com/shoeshine:latest"
-
 # Lambda Configuration
 lambda_memory   = 2048
 lambda_timeout  = 300
+lambda_reserved_concurrency = 0
 
 # Bedrock Model
 bedrock_model_id = "anthropic.claude-sonnet-4-20250507"
+enable_bedrock = true
 
-# Optional: Enable X-Ray tracing
-enable_xray = false
+# Optional: S3 bucket for document storage
+# Leave empty to skip, or provide existing bucket name
+s3_bucket = ""
 
-# Optional: Reserved concurrency
-lambda_reserved_concurrency = 10
+# ECR Image Tag
+ecr_image_tag = "latest"
 ```
 
 ### 3. Plan Deployment
@@ -371,7 +390,15 @@ cd terraform
 terraform destroy
 ```
 
-### 2. Delete ECR Repository
+This will remove:
+- Lambda function
+- API Gateway
+- CloudWatch log groups
+- IAM roles and policies
+- ECR repository
+- S3 bucket (if created by Terraform)
+
+### 2. Delete ECR Repository (if not destroyed by Terraform)
 
 ```bash
 aws ecr delete-repository \
@@ -379,20 +406,13 @@ aws ecr delete-repository \
   --force
 ```
 
-### 3. Delete S3 Buckets
+### 3. Delete S3 Bucket (if using external bucket)
 
 ```bash
-# Empty and delete S3 bucket
-aws s3 rb s3://shoeshine-documents-production --force
-aws s3 rb s3://shoeshine-terraform-state --force
+# Empty and delete S3 bucket (if you created one manually)
+aws s3 rb s3://your-bucket-name --force
 ```
 
-### 4. Delete DynamoDB Table
-
-```bash
-aws dynamodb delete-table \
-  --table-name shoeshine-extractions-production
-```
 
 ---
 
@@ -400,14 +420,30 @@ aws dynamodb delete-table \
 
 ### Lambda Cold Starts
 
-PaddleOCR can cause cold starts. Mitigate with:
+EasyOCR and Tesseract can cause cold starts (15-30s for first invocation). Mitigate with:
 
-1. **Provisioned Concurrency** (higher cost)
+1. **Increased Memory** (faster CPU, no extra cost for cold starts)
    ```hcl
-   lambda_reserved_concurrency = 10
+   lambda_memory = 3072  # or 4096
    ```
 
-2. **Increased Memory**
+2. **Pre-downloaded Models** (already in Dockerfile.lambda)
+   - EasyOCR models are pre-downloaded during build
+   - Reduces cold start by ~3 minutes
+
+3. **Keep Warm with Scheduled Pings** (not recommended for low traffic)
+   - Schedule CloudWatch Event to invoke Lambda every 5 minutes
+
+### Lambda Timeout Errors
+
+If Lambda times out before completing OCR:
+
+1. **Increase timeout** (max 900s)
+   ```hcl
+   lambda_timeout = 300  # or higher for large documents
+   ```
+
+2. **Increase memory** (faster processing)
    ```hcl
    lambda_memory = 3072
    ```
@@ -423,7 +459,7 @@ Check CloudWatch logs for errors:
 
 Verify IAM role has Bedrock permissions:
 ```bash
-aws bedrock list-foundation-models --region us-east-1
+aws bedrock list-foundation-models --region eu-west-1
 ```
 
 ### API Returns 403
@@ -437,21 +473,24 @@ Check:
 
 ## Cost Estimation
 
-| Service | Approximate Cost (us-east-1) |
+| Service | Approximate Cost (eu-west-1) |
 |---------|------------------------------|
 | Lambda | $0.20 per 1M requests + compute |
-| API Gateway | $3.50 per 1M API calls |
+| API Gateway (REST API) | $3.50 per 1M API calls |
 | S3 | $0.023 per GB/month |
-| DynamoDB | $0.25 per 1M write requests |
+| ECR Storage | $0.10 per GB/month |
 | CloudWatch Logs | $0.50 per GB ingested |
 | Bedrock | $0.03 per 1K input tokens (Claude) |
 
 **Estimated cost for 1M requests/month:**
-- Lambda (2GB, 5s duration): ~$100
-- API Gateway: ~$3.50
+- Lambda (2048MB, 5s duration): ~$100
+- API Gateway (REST API): ~$3.50
+- ECR Storage (3GB): ~$0.30
 - Bedrock (structured extraction): ~$50
 - CloudWatch Logs: ~$10
-- **Total: ~$165/month**
+- **Total: ~$164/month**
+
+**Note: Lambda costs scale with usage - you pay nothing when not in use!**
 
 ---
 

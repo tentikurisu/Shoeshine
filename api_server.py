@@ -875,3 +875,15 @@ if __name__ == "__main__":
         reload=True,
         log_level="info",
     )
+
+# ============================================================================
+# AWS Lambda Handler
+# ============================================================================
+
+try:
+    from mangum import Mangum
+
+    lambda_handler = Mangum(app, lifespan="off")
+except ImportError:
+    lambda_handler = None
+    print("WARNING: mangum not installed - Lambda deployment unavailable")

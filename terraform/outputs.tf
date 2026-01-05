@@ -1,19 +1,29 @@
 output "api_endpoint" {
-  description = "Public API endpoint URL"
-  value = aws_lb.shoeshine.dns_name
+  description = "API Gateway endpoint URL"
+  value       = aws_apigatewayv2_api.shoeshine.api_endpoint
 }
 
-output "ecs_cluster_name" {
-  description = "ECS cluster name"
-  value = aws_ecs_cluster.shoeshine.name
+output "lambda_function_name" {
+  description = "Lambda function name"
+  value       = aws_lambda_function.shoeshine.function_name
 }
 
-output "ecs_service_name" {
-  description = "ECS service name"
-  value = aws_ecs_service.shoeshine_api.name
+output "lambda_function_arn" {
+  description = "Lambda function ARN"
+  value       = aws_lambda_function.shoeshine.arn
 }
 
-output "task_definition_arn" {
-  description = "ECS task definition ARN"
-  value = aws_ecs_task_definition.shoeshine.arn
+output "ecr_repository_url" {
+  description = "ECR repository URL"
+  value       = aws_ecr_repository.shoeshine.repository_url
+}
+
+output "cloudwatch_log_group" {
+  description = "CloudWatch log group name"
+  value       = aws_cloudwatch_log_group.shoeshine.name
+}
+
+output "s3_bucket_name" {
+  description = "S3 bucket name (if configured)"
+  value       = var.s3_bucket != "" && !can(regex("^arn:aws:s3:::", var.s3_bucket)) ? var.s3_bucket : null
 }
