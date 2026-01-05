@@ -53,11 +53,14 @@ curl http://localhost:8000/health
 
 # Extract text from a document
 curl -X POST http://localhost:8000/extract/text \
-  -F "document=@path/to/document.jpg"
+  -F "document=@path/to/your-document.jpg"
 
 # Or with bounding boxes
 curl -X POST http://localhost:8000/extract/bbox \
-  -F "document=@path/to/receipt.png"
+  -F "document=@path/to/your-receipt.png"
+```
+
+> **Note:** Sample documents are available in `data/raw/` for testing. Use `data/raw/doc_00000_9795.jpg` as an example.
 ```
 
 ### Option 2: Local Development
@@ -128,7 +131,7 @@ curl http://localhost:8000/health
 ```bash
 curl -X POST http://localhost:8000/extract/text \
   -H "X-API-Key: sk-shoeshine-xxxxx" \
-  -F "document=@document.jpg"
+  -F "document=@data/raw/doc_00000_9795.jpg"
 ```
 
 **Response:**
@@ -146,7 +149,7 @@ curl -X POST http://localhost:8000/extract/text \
 **Extract with Bounding Boxes**
 ```bash
 curl -X POST http://localhost:8000/extract/bbox \
-  -F "document=@document.jpg" \
+  -F "document=@data/raw/doc_00000_9795.jpg" \
   -H "X-API-Key: sk-shoeshine-xxxxx"
 ```
 
@@ -174,7 +177,7 @@ curl -X POST http://localhost:8000/extract/bbox \
 import requests
 
 # Extract text from document
-with open("document.jpg", "rb") as f:
+with open("data/raw/doc_00000_9795.jpg", "rb") as f:
     response = requests.post(
         "http://localhost:8000/extract/text",
         files={"document": f}
@@ -203,7 +206,8 @@ print(response.json()["message"]["content"])
 
 **Run example:**
 ```bash
-python examples/ollama_integration.py document.jpg "What is the account number?"
+# First, use the sample document from the repository
+python examples/ollama_integration.py data/raw/doc_00000_9795.jpg "What is the account number?"
 ```
 
 ### Using AWS Bedrock
@@ -211,8 +215,8 @@ python examples/ollama_integration.py document.jpg "What is the account number?"
 ```python
 import requests
 
-# Extract text
-with open("document.jpg", "rb") as f:
+# Extract text using sample document
+with open("data/raw/doc_00000_9795.jpg", "rb") as f:
     response = requests.post(
         "http://localhost:8000/extract/text",
         files={"document": f}
