@@ -1,0 +1,72 @@
+# Shoeshine API Server - Docker Compose
+# For local development and testing with Ollama
+
+version: '3.8'
+
+services:
+  shoeshine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shoeshine-api
+    ports:
+      - "8000:8000"
+    environment:
+      # API Configuration
+      - SHOESHINE_HOST=0.0.0.0
+      - SHOESHINE_PORT=8000
+      - SHOESHINE_MAX_FILE_SIZE=10
+      - SHOESHINE_ENV=local
+
+      # API Key authentication (disabled by default for local dev)
+      - SHOESHINE_REQUIRE_API_KEY=false
+
+      # Ollama configuration
+      - SHOESHINE_OLLAMA_URL=http://ollama:11434
+      - SHOESHINE_LLM_MODEL=llama3
+
+      # Disable PaddleOCR model check warning
+      - PADDLEX_DISABLE_MODEL_SOURCE_CHECK=True
+
+      # Logging
+      - SHOESHINE_LOG_LEVEL=info
+
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - shoeshine-network
+    depends_on:
+      - ollama
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: shoeshine-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+    networks:
+      - shoeshine-network
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  shoeshine-network:
+    driver: bridge
+
+volumes:
+  ollama-data:

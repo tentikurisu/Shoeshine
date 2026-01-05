@@ -1,0 +1,32 @@
+paths:
+  raw_dir: "data/raw"
+  out_dir: "data/out"
+  index_dir: "data/index"
+
+ocr:
+  engine: "paddleocr"
+  lang: "en"
+  min_conf: 0.0
+
+pdf:
+  zoom: 2.5   # increase to 3.0 for tiny text
+
+chunking:
+  max_chars: 1100
+  min_chars: 1
+
+retrieval:
+  top_k: 8
+
+ollama:
+  base_url: "http://localhost:11434"
+  embed_model: "nomic-embed-text"
+  llm_model: "gemma2:9b"   # swap to qwen2.5:7b-instruct etc.
+  keep_alive: "0"
+
+extraction:
+  # “banking info” schema is intentionally broad for PoC
+  output_format: "both"  # txt | csv | both
+
+debug:
+  enabled: true

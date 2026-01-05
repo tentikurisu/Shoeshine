@@ -1,0 +1,40 @@
+{
+  "items": [
+    {
+      "key": "Account number",
+      "value": "42-75-79/54549441",
+      "where": "doc_00000_9795.jpg p.1",
+      "note": "Synthetic account"
+    },
+    {
+      "key": "Account number",
+      "value": "12345678"
+    },
+    {
+      "key": "Account number",
+      "value": "42-75-79: 54549441",
+      "where": "doc_00000_9795.pdf p.1"
+    },
+    {
+      "key": "Account Name",
+      "value": "(Your Name)"
+    },
+    {
+      "key": "Account Name",
+      "value": "[Your Name]"
+    },
+    {
+      "key": "Account Type",
+      "value": "Curren: Sav·ngs"
+    },
+    {
+      "key": "Account Type",
+      "value": "Current Savings"
+    },
+    {
+      "key": "Bank name",
+      "value": "Cedar Bank",
+      "where": "doc_00000_9795.pdf p.1"
+    }
+  ]
+}

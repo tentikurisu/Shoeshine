@@ -1,0 +1,42 @@
+# .gitignore for Shoeshine
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+.venv/
+*.py[cod]
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.pytest_cache
+
+# Logs
+*.log
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+*.jwt
+
+# Docker
+.docker/

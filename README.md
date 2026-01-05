@@ -1,0 +1,445 @@
+# Shoeshine - Document Scanning Layer for Local LLMs
+
+**A lightweight, model-agnostic document scanning service using OCR techniques.**
+
+<p align="center">
+  <em>This is NOT AI. Pure OCR, no training, no retention.</em>
+</p>
+---
+
+## What is Shoeshine?
+
+Shoeshine is a **document-to-text translator** that extracts text from images and PDFs using OCR (Optical Character Recognition). It then feeds this text to local LLMs like Ollama, LM Studio, or cloud models like AWS Bedrock.
+
+### Key Features
+
+| Feature | Description |
+|--------|-------------|
+| **Model-agnostic** | Works with any LLM - Ollama, Bedrock, LM Studio, vLLM |
+| **Local Processing** | OCR runs locally - your data never leaves your infrastructure |
+| **Zero Retention** | Documents are never stored or cached (configurable) |
+| **Multiple OCR Engines** | EasyOCR (default), Tesseract (fallback) |
+| **Structured Extraction** | Optional LLM integration for key-value extraction |
+| **OpenAI-Compatible** | Standardized API responses |
+
+---
+
+## This is NOT AI
+
+| Aspect | Description |
+|--------|-------------|
+| **Pure OCR** | Uses Optical Character Recognition, not neural AI |
+| **No Training** | Your documents never train any model |
+| **No Retention** | Extracted text is returned, not stored |
+| **No Embeddings** | No vector storage or RAG system |
+| **Translation** | Document-to-text translator only |
+
+---
+
+## Quick Start
+
+### Option 1: Docker (Recommended)
+
+```bash
+# Clone repository
+git clone https://github.com/your-org/shoeshine.git
+cd shoeshine
+
+# Start the service
+docker compose up --build
+
+# In another terminal, test it
+curl http://localhost:8000/health
+
+# Extract text from a document
+curl -X POST http://localhost:8000/extract/text \
+  -F "document=@path/to/document.jpg"
+
+# Or with bounding boxes
+curl -X POST http://localhost:8000/extract/bbox \
+  -F "document=@path/to/receipt.png"
+```
+
+### Option 2: Local Development
+
+```bash
+# Create virtual environment
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+
+# Start server
+python api_server.py
+
+# Or with debug mode
+python api_server.py --host 0.0.0.0 --port 8000
+```
+
+### Option 3: Production with Docker
+
+```bash
+# With API key authentication
+docker compose up -d
+
+# With custom Ollama URL
+SHOESHINE_OLLAMA_URL=http://host.docker.internal:11434 docker compose up -d
+```
+
+---
+
+## API Reference
+
+### Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/health` | Health check and service status |
+| GET | `/models` | List available models and OCR engines |
+| POST | `/extract/text` | Extract plain text from documents |
+| POST | `/extract/bbox` | Extract text with bounding box coordinates |
+| POST | `/harvest` | Structured key-value extraction (requires LLM) |
+
+### Authentication
+
+All endpoints accept an optional `X-API-Key` header for authentication. Configure via the `SHOESHINE_API_KEY` environment variable.
+
+### Example Requests
+
+**Health Check**
+```bash
+curl http://localhost:8000/health
+```
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "timestamp": "2024-01-04T00:00:00Z",
+  "version": "1.0.0",
+  "services": {
+    "ocr": true,
+    "ollama": false,
+    "bedrock": false
+  },
+  "ocr_engine": "easyocr"
+}
+```
+
+**Extract Text**
+```bash
+curl -X POST http://localhost:8000/extract/text \
+  -H "X-API-Key: sk-shoeshine-xxxxx" \
+  -F "document=@document.jpg"
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "id": "shoe-abc12345",
+  "object": "text_extraction",
+  "text": "Bank Name: Cedar Bank\nAccount: 12345678",
+  "processing_time_ms": 1250,
+  "model": "shoeshine-ocr"
+}
+```
+
+**Extract with Bounding Boxes**
+```bash
+curl -X POST http://localhost:8000/extract/bbox \
+  -F "document=@document.jpg" \
+  -H "X-API-Key: sk-shoeshine-xxxxx"
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "items": [
+    {
+      "text": "Invoice #12345",
+      "confidence": 0.999,
+      "bbox": [100, 50, 300, 80]
+    }
+  ]
+}
+```
+
+---
+
+## Integration Examples
+
+### Using Ollama
+
+```python
+import requests
+
+# Extract text from document
+with open("document.jpg", "rb") as f:
+    response = requests.post(
+        "http://localhost:8000/extract/text",
+        files={"document": f}
+    )
+text = response.json()["text"]
+
+# Send to Ollama
+response = requests.post(
+    "http://localhost:11434/api/chat",
+    json={
+        "model": "llama3",
+        "messages": [
+            {
+                "role": "system",
+                "content": "Answer based on the provided document text."
+            },
+            {
+                "role": "user",
+                "content": f"Document:\n{text}\n\nQuestion: What is the account number?"
+            }
+        ]
+    }
+    )
+print(response.json()["message"]["content"])
+```
+
+**Run example:**
+```bash
+python examples/ollama_integration.py document.jpg "What is the account number?"
+```
+
+### Using AWS Bedrock
+
+```python
+import requests
+
+# Extract text
+with open("document.jpg", "rb") as f:
+    response = requests.post(
+        "http://localhost:8000/extract/text",
+        files={"document": f}
+    )
+text = response.json()["text"]
+
+# Send to Bedrock
+import boto3
+
+bedrock = boto3.client("bedrock-runtime", region_name="us-east-1")
+
+response = bedrock.converse(
+    modelId="anthropic.claude-sonnet-4-20250507",
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                {"text": f"Document:\n{text}\n\nQuestion: What is the bank name?"}
+            ]
+        }
+    ],
+    inferenceConfig={"maxTokens": 4096, "temperature": 0.0}
+)
+
+print(response["output"]["message"]["content"][0]["text"])
+```
+
+---
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SHOESHINE_HOST` | `0.0.0.0` | Host to bind |
+| `SHOESHINE_PORT` | `8000` | Port to listen |
+| `SHOESHINE_API_KEY` | - | API key for authentication (optional) |
+| `SHOESHINE_OLLAMA_URL` | - | Ollama URL for harvest endpoint (optional) |
+| `SHOESHINE_LLM_MODEL` | `llama3` | LLM model for harvest |
+| `SHOESHINE_OCR_ENGINE` | `easyocr` | OCR engine: `easyocr` or `tesseract` |
+| `AWS_REGION` | - | AWS region for Bedrock (optional) |
+| `AWS_ACCESS_KEY_ID` | - | AWS access key ID (optional) |
+| `AWS_SECRET_ACCESS_KEY` | - | AWS secret access key (optional) |
+| `BEDROCK_MODEL_ID` | `anthropic.claude-sonnet-4-20250507` | Bedrock model ID |
+
+### OCR Engines
+
+**EasyOCR (Default)**
+- Pure Python, no system dependencies
+- Automatic model download (~300MB on first run)
+- Good accuracy on clear text
+
+**Tesseract (Fallback)**
+- Very fast
+- Small models
+- Requires system installation
+- See [installation guide](https://github.com/tesseract-ocr/tesseract/wiki)
+
+---
+
+## Architecture
+
+```
+┌──────────────────────────────────────────┐
+│                    Client Application     │
+│         (Your app, routing project)    │
+└───────────────────────────────────────┘
+                    ↓              Extracts Text → Any Model
+└───────────────────────────────────────┘
+                  Shoeshine API Server
+                  - FastAPI (web framework)
+                  - EasyOCR (OCR engine)
+                  - Optional: Ollama/Bedrock
+                  ↓
+                  Zero data retention
+```
+
+---
+
+## Deployment
+
+### Local Development
+
+Start with:
+```bash
+python api_server.py
+```
+
+### Docker
+
+```bash
+docker compose up --build
+```
+
+With environment variables:
+```bash
+SHOESHINE_API_KEY=sk-your-key docker compose up -d
+```
+
+### AWS EC2
+
+```bash
+# On EC2 instance
+sudo yum install -y docker
+sudo systemctl start docker
+
+# Clone and run
+git clone https://github.com/your-org/shoeshine.git
+cd shoeshine
+docker compose up -d
+```
+
+### AWS ECS Fargate
+
+1. Push Docker image to ECR:
+```bash
+aws ecr get-login-password | docker login -u <username> --password-stdin
+docker build -t shoeshine-ecs .
+docker tag shoeshine-ecs <your-ecr-uri>/shoeshine:latest
+docker push <your-ecr-uri>/shoeshine:latest
+```
+
+2. Create ECS service (via console or IaC)
+
+### AWS Lambda
+
+1. Build Lambda image:
+```bash
+docker buildx build --platform linux/amd64 -t shoeshine-lambda .
+docker tag shoeshine-lambda <your-ecr-uri>/shoeshine:latest
+docker push <your-ecr-uri>/shoeshine-lambda:latest
+```
+
+2. Configure Lambda (see [docker-deploy.yml](.github/workflows/docker-deploy.yml))
+
+3. Set up API Gateway
+
+---
+
+## Project Structure
+
+```
+shoeshine/
+├── api_server.py              # Main API server
+├── shoeshine_lib.py           # Core OCR library (legacy, kept for compatibility)
+├── ingest.py                 # Batch ingestion tool
+├── ask.py                    # Q&A CLI tool
+├── config.yaml               # Configuration
+├── requirements.txt           # Python dependencies
+├── Dockerfile                # Docker container
+├── docker-compose.yml          # Docker orchestration
+├── tests/                    # Test suite
+├── examples/                 # Integration examples
+│   ├── ollama_integration.py  # Ollama integration
+│   ├── bedrock_integration.py # AWS Bedrock integration
+│   └── basic_usage.py          # Basic usage example
+├── .gitignore               # Git ignore rules
+├── LICENSE                  # MIT License
+├── README.md               # This file
+└── .github/                 # GitHub workflows
+    └── workflows/
+        ├── ci.yml          # CI/CD pipeline
+        └── docker-deploy.yml  # Docker deployment
+```
+
+---
+
+## Privacy & Security
+
+See [PRIVACY.md](PRIVACY.md) for detailed privacy guarantees and security measures.
+
+### Key Points
+
+- **No Data Retention**: Documents are processed in memory only
+- **No Training Data**: Extracted text never trains any model
+- **Zero External Calls**: OCR runs locally by default
+- **Optional Authentication**: API key or IAM-based auth
+- **Input Validation**: File type verification, size limits
+- **Audit Logging**: Only metadata is logged, not document contents
+
+---
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Write tests for new features
+5. Submit a pull request
+
+---
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file.
+
+---
+
+## Changelog
+
+### v1.0.0 - Initial Release
+
+**Features**
+- EasyOCR integration with automatic model download
+- Tesseract fallback support
+- OpenAI-compatible API responses
+- Structured extraction with Ollama/Bedrock integration
+- AWS Bedrock support for Lambda deployment
+- Docker support with multi-arch builds
+- Comprehensive test suite with pytest
+- GitHub Actions CI/CD workflows
+- Docker deployment for ECS, Lambda, EC2
+
+**Bug Fixes**
+- Fixed PaddleOCR 3.x API compatibility issues
+- Switched to EasyOCR for better cross-platform support
+- Fixed async file upload handling in API endpoints
+- Added proper error handling and logging
+- Added multiple OCR engines with fallback support
+
+---
+
+## Acknowledgments
+
+- [EasyOCR](https://github.com/JaidedAI/EasyOCR) - OCR engine
+- [FastAPI](https://fastapi.tiangolo.com/) - Web framework
+- [OpenCV](https://opencv.org/) - Image processing
+- [Ollama](https://ollama.com/) - Local LLM (integration option)
+- [AWS Bedrock](https://aws.amazon.com/bedrock/) - AI model (integration option)

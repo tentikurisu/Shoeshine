@@ -1,0 +1,23 @@
+## DOCUMENT SUMMARY
+
+* **Account Numbers:** Multiple account numbers were found, including: 42-75-79/54549441, 12345678, and 42-75-79: 54549441.
+* **Synthetic Account:** One account number (42-75-79/54549441) is marked as synthetic.
+* **Account Names:**  "(Your Name)" and "[Your Name]" were identified as possible account names. 
+* **Account Types:** "Curren: Sav·ngs" and "Current Savings" are listed as potential account types.
+* **Bank Name:**  "Cedar Bank" was extracted from the document.
+
+## BANKING INFO
+
+* **Account Number (1):** 42-75-79/54549441 
+    * **Note:** Synthetic Account
+    * **Location:** doc_00000_9795.jpg, Page 1
+* **Account Number (2):** 12345678
+    * **Location:**  Not specified
+* **Account Number (3):** 42-75-79: 54549441
+    * **Location:** doc_00000_9795.pdf, Page 1
+* **Account Name (1):** (Your Name)
+* **Account Name (2):** [Your Name]
+* **Account Type (1):** Curren: Sav·ngs
+* **Account Type (2):** Current Savings
+* **Bank Name:** Cedar Bank
+    * **Location:** doc_00000_9795.pdf, Page 1
