@@ -11,5 +11,4 @@ sys.path.insert(0, str(src_path))
 # Set test environment (use 'local' not 'testing' which is not a valid enum)
 os.environ["SHOESHINE_ENV"] = "local"
 os.environ["SHOESHINE_REQUIRE_API_KEY"] = "false"
-os.environ["SHOESHINE_BEDROCK_MODEL_ID"] = "anthropic.claude-sonnet-4-20250507"
 os.environ["DISABLE_MODEL_SOURCE_CHECK"] = "True"

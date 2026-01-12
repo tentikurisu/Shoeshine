@@ -30,7 +30,6 @@ RUN python -c "import easyocr; easyocr.Reader(['en'], download=True, gpu=False)"
 
 # Copy application code
 COPY api_server.py ./
-COPY shoeshine_lib.py ./
 COPY src/ ./src/
 COPY config.yaml ./
 

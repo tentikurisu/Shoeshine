@@ -334,10 +334,6 @@ class OCRService:
         }
 
 
-class OllamaService:
-    """Service for Ollama integration - REMOVED in aws-bedrock-only branch."""
-
-
 class BedrockService:
     """Service for AWS Bedrock integration."""
 
