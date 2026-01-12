@@ -94,18 +94,17 @@ data "aws_iam_policy_document" "lambda_policy" {
   }
 
   dynamic "statement" {
-    for_each = var.s3_bucket != "" ? [1] : []
+    for_each = var.allowed_s3_buckets != "" ? split(",", var.allowed_s3_buckets) : []
     content {
-      sid = "S3Access"
+      sid = "S3Access-${statement.key}"
 
       actions = [
         "s3:GetObject",
-        "s3:PutObject"
+        "s3:HeadObject"
       ]
 
       resources = [
-        "${var.s3_bucket}/*",
-        var.s3_bucket
+        "${trimspace(statement.value)}/*"
       ]
     }
   }
@@ -153,11 +152,11 @@ resource "aws_lambda_function" "shoeshine" {
 
   environment {
     variables = {
-      SHOESHINE_ENV     = var.environment
-      SHOESHINE_API_KEY = var.api_key
-      AWS_REGION        = var.aws_region
-      BEDROCK_MODEL_ID  = var.enable_bedrock ? var.bedrock_model_id : ""
-      S3_BUCKET         = var.s3_bucket
+      SHOESHINE_ENV      = var.environment
+      SHOESHINE_API_KEY  = var.api_key
+      AWS_REGION         = var.aws_region
+      BEDROCK_MODEL_ID   = var.enable_bedrock ? var.bedrock_model_id : ""
+      ALLOWED_S3_BUCKETS = var.allowed_s3_buckets
     }
   }
 
@@ -174,40 +173,6 @@ resource "aws_lambda_function" "shoeshine" {
   tags = {
     Project     = "Shoeshine"
     Environment = var.environment
-  }
-}
-
-# ============================================================================
-# S3 Bucket (Optional)
-# ============================================================================
-
-resource "aws_s3_bucket" "shoeshine" {
-  count  = var.s3_bucket != "" && !can(regex("^arn:aws:s3:::", var.s3_bucket)) ? 1 : 0
-  bucket = var.s3_bucket
-
-  tags = {
-    Project     = "Shoeshine"
-    Environment = var.environment
-  }
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "shoeshine" {
-  count  = var.s3_bucket != "" && !can(regex("^arn:aws:s3:::", var.s3_bucket)) ? 1 : 0
-  bucket = aws_s3_bucket.shoeshine[0].id
-
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
-}
-
-resource "aws_s3_bucket_versioning" "shoeshine" {
-  count  = var.s3_bucket != "" && !can(regex("^arn:aws:s3:::", var.s3_bucket)) ? 1 : 0
-  bucket = aws_s3_bucket.shoeshine[0].id
-
-  versioning_configuration {
-    status = "Enabled"
   }
 }
 

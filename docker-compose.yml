@@ -1,7 +1,5 @@
 # Shoeshine API Server - Docker Compose
-# For local development and testing with Ollama
-
-version: '3.8'
+# For local OCR testing (LLM via AWS Bedrock)
 
 services:
   shoeshine:
@@ -15,15 +13,13 @@ services:
       # API Configuration
       - SHOESHINE_HOST=0.0.0.0
       - SHOESHINE_PORT=8000
-      - SHOESHINE_MAX_FILE_SIZE=10
       - SHOESHINE_ENV=local
 
-      # API Key authentication (disabled by default for local dev)
-      - SHOESHINE_REQUIRE_API_KEY=false
-
-      # Ollama configuration
-      - SHOESHINE_OLLAMA_URL=http://ollama:11434
-      - SHOESHINE_LLM_MODEL=llama3
+      # AWS Bedrock (configure credentials for LLM features)
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - BEDROCK_MODEL_ID=anthropic.claude-sonnet-4-20250507
 
       # Disable PaddleOCR model check warning
       - PADDLEX_DISABLE_MODEL_SOURCE_CHECK=True
@@ -42,31 +38,7 @@ services:
       start_period: 10s
     networks:
       - shoeshine-network
-    depends_on:
-      - ollama
-
-  ollama:
-    image: ollama/ollama:latest
-    container_name: shoeshine-ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama-data:/root/.ollama
-    restart: unless-stopped
-    networks:
-      - shoeshine-network
-    environment:
-      - OLLAMA_KEEP_ALIVE=24h
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/version"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
 
 networks:
   shoeshine-network:
     driver: bridge
-
-volumes:
-  ollama-data:

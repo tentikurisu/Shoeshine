@@ -22,8 +22,3 @@ output "cloudwatch_log_group" {
   description = "CloudWatch log group name"
   value       = aws_cloudwatch_log_group.shoeshine.name
 }
-
-output "s3_bucket_name" {
-  description = "S3 bucket name (if configured)"
-  value       = var.s3_bucket != "" && !can(regex("^arn:aws:s3:::", var.s3_bucket)) ? var.s3_bucket : null
-}

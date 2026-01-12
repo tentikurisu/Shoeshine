@@ -9,7 +9,7 @@ ocr:
   min_conf: 0.0
 
 pdf:
-  zoom: 2.5   # increase to 3.0 for tiny text
+  zoom: 2.5
 
 chunking:
   max_chars: 1100
@@ -18,15 +18,11 @@ chunking:
 retrieval:
   top_k: 8
 
-ollama:
-  base_url: "http://localhost:11434"
-  embed_model: "nomic-embed-text"
-  llm_model: "gemma2:9b"   # swap to qwen2.5:7b-instruct etc.
-  keep_alive: "0"
+bedrock:
+  model_id: "anthropic.claude-sonnet-4-20250507"
 
 extraction:
-  # “banking info” schema is intentionally broad for PoC
-  output_format: "both"  # txt | csv | both
+  output_format: "both"
 
 debug:
   enabled: true

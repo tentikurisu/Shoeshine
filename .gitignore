@@ -17,6 +17,7 @@ ENV/
 *.swp
 *.swo
 *.sublime-project
+.opencode/
 
 # OS
 .DS_Store

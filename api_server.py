@@ -1,8 +1,8 @@
 """
-Shoeshine API Server - Document Scanning Layer for Local LLMs
+Shoeshine API Server - Document Scanning Layer for AWS Bedrock
 
 A lightweight, model-agnostic document scanning service that translates
-images/PDFs to structured text for consumption by local LLMs.
+images/PDFs to structured text for consumption by AWS Bedrock.
 
 Philosophy:
     This is NOT AI. It's a document-to-text translator using OCR techniques.
@@ -16,12 +16,11 @@ Environment Variables:
     SHOESHINE_API_KEY           - API key for authentication (optional)
     SHOESHINE_HOST              - Host to bind (default: 0.0.0.0)
     SHOESHINE_PORT              - Port to listen (default: 8000)
-    SHOESHINE_OLLAMA_URL        - Ollama URL for harvest endpoint (optional)
-    SHOESHINE_LLM_MODEL         - LLM model name for harvest (optional)
     AWS_REGION                  - AWS region for Bedrock (optional)
     AWS_ACCESS_KEY_ID           - AWS credentials (optional)
     AWS_SECRET_ACCESS_KEY       - AWS credentials (optional)
     BEDROCK_MODEL_ID            - Bedrock model ID (optional)
+    ALLOWED_S3_BUCKETS          - Comma-separated S3 buckets for document retrieval
     SHOESHINE_OCR_ENGINE        - OCR engine: easyocr (default), pytesseract
 """
 
@@ -36,14 +35,17 @@ from typing import Optional, List, Dict, Any
 import cv2
 import numpy as np
 import requests
+import fitz
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from PIL import Image
 from pydantic import BaseModel, Field
+from src.llm_clients import BedrockClient
 
 
 # ============================================================================
@@ -92,18 +94,32 @@ class HarvestItem(BaseModel):
     key: str
     value: str
     where: Optional[str] = None
+    confidence: Optional[float] = None
 
 
 class HarvestResponse(BaseModel):
-    """Response with extracted key-value pairs."""
+    """Harvest endpoint response."""
+
+    success: bool
+    extracted_text: Optional[str] = None
+    answer: Optional[str] = None
+    model: str
+    processing_time_ms: float
+    error: Optional[str] = None
+
+
+class AskResponse(BaseModel):
+    """Response for document Q&A."""
 
     success: bool
     id: str = Field(default_factory=lambda: f"shoe-{uuid.uuid4().hex[:8]}")
-    object: str = "text_extraction.harvest"
+    object: str = "text_extraction.ask"
     created: int = Field(default_factory=lambda: int(datetime.utcnow().timestamp()))
-    items: List[HarvestItem]
-    usage: Optional[UsageInfo] = None
-    model: str = "shoeshine-harvest"
+    question: str
+    answer: str
+    extracted_text: str
+    llm: str = "bedrock"
+    model: str = "anthropic.claude-sonnet-4-20250507"
     processing_time_ms: Optional[int] = None
 
 
@@ -145,12 +161,11 @@ class ApiConfig:
     api_key: Optional[str]
     host: str
     port: int
-    ollama_url: Optional[str]
-    llm_model: Optional[str]
     aws_region: Optional[str]
     aws_access_key_id: Optional[str]
     aws_secret_access_key: Optional[str]
     bedrock_model_id: Optional[str]
+    allowed_s3_buckets: str
     ocr_engine: str
 
     @classmethod
@@ -159,14 +174,13 @@ class ApiConfig:
             api_key=os.getenv("SHOESHINE_API_KEY"),
             host=os.getenv("SHOESHINE_HOST", "0.0.0.0"),
             port=int(os.getenv("SHOESHINE_PORT", "8000")),
-            ollama_url=os.getenv("SHOESHINE_OLLAMA_URL"),
-            llm_model=os.getenv("SHOESHINE_LLM_MODEL", "llama3"),
             aws_region=os.getenv("AWS_REGION"),
             aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
             aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
             bedrock_model_id=os.getenv(
                 "BEDROCK_MODEL_ID", "anthropic.claude-sonnet-4-20250507"
             ),
+            allowed_s3_buckets=os.getenv("ALLOWED_S3_BUCKETS", ""),
             ocr_engine=os.getenv("SHOESHINE_OCR_ENGINE", "easyocr"),
         )
 
@@ -323,75 +337,7 @@ class OCRService:
 
 
 class OllamaService:
-    """Service for Ollama integration."""
-
-    def __init__(self, base_url: str):
-        self.base_url = base_url
-
-    def is_available(self) -> bool:
-        """Check if Ollama is available."""
-        try:
-            response = requests.get(f"{self.base_url}/api/version", timeout=2)
-            return response.status_code == 200
-        except:
-            return False
-
-    def extract_structured(
-        self, text: str, fields: List[str], system_prompt: str = None
-    ) -> List[Dict]:
-        """Extract structured data from text using Ollama."""
-        if not self.is_available():
-            return []
-
-        from api_server import ApiConfig
-
-        config = ApiConfig.from_env()
-        model = config.llm_model or "llama3"
-
-        default_system = """You are extracting structured data from a document.
-Extract requested fields as JSON array of objects.
-Output format: [{"key": "field_name", "value": "extracted value", "where": "location"}]
-
-If a field is not found, include it with value "NOT_FOUND"."""
-
-        try:
-            response = requests.post(
-                f"{self.base_url}/api/chat",
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt or default_system},
-                        {
-                            "role": "user",
-                            "content": f"Extract these fields: {', '.join(fields)}\n\nDocument:\n{text}",
-                        },
-                    ],
-                    "stream": False,
-                },
-                timeout=120,
-            )
-
-            if response.status_code != 200:
-                return []
-
-            result = response.json()
-            content = result.get("message", {}).get("content", "")
-
-            try:
-                import json
-
-                data = json.loads(content)
-                if isinstance(data, list):
-                    return data
-                if isinstance(data, dict) and "items" in data:
-                    return data["items"]
-            except:
-                pass
-
-        except Exception as e:
-            print(f"Ollama extraction failed: {e}")
-
-        return []
+    """Service for Ollama integration - REMOVED in aws-bedrock-only branch."""
 
 
 class BedrockService:
@@ -483,6 +429,71 @@ def decode_upload_file(content: bytes) -> np.ndarray:
     return img
 
 
+def is_pdf_file(content: bytes) -> bool:
+    """Check if file content is a PDF by magic bytes."""
+    return content[:4] == b"%PDF"
+
+
+def decode_pdf_pages(content: bytes) -> List[np.ndarray]:
+    """Decode PDF content to list of OpenCV images (one per page)."""
+    try:
+        doc = fitz.open(stream=content, filetype="pdf")
+    except Exception as e:
+        raise ValueError(f"Invalid PDF file: {str(e)}")
+
+    if doc.page_count == 0:
+        raise ValueError("PDF has no pages")
+
+    images = []
+    for page_num in range(doc.page_count):
+        page = doc[page_num]
+        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+        img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+            pix.height, pix.width, 3
+        )
+        img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        images.append(img_bgr)
+
+    return images
+
+
+def process_document_pages(
+    images: List[np.ndarray], preprocess: bool = True
+) -> Dict[str, Any]:
+    """Process multiple document pages and combine results."""
+    from api_server import app
+
+    all_items = []
+    all_text_parts = []
+    has_errors = False
+    error_msg = None
+
+    for page_num, img in enumerate(images, start=1):
+        if preprocess:
+            img = preprocess_for_ocr(img)
+
+        result = app.state.ocr_service.process(img)
+
+        if not result["success"]:
+            has_errors = True
+            error_msg = result.get("error", "Unknown OCR error")
+            continue
+
+        page_marker = f"--- Page {page_num} ---"
+        all_text_parts.append(page_marker)
+        all_text_parts.append(result["text"])
+
+        for item in result["items"]:
+            item["text"] = f"{page_marker} {item['text']}"
+            all_items.append(item)
+
+    if not all_items and has_errors:
+        return {"success": False, "error": error_msg, "text": "", "items": []}
+
+    combined_text = "\n\n".join(all_text_parts)
+    return {"success": True, "text": combined_text, "items": all_items}
+
+
 def preprocess_for_ocr(img_bgr: np.ndarray) -> np.ndarray:
     """
     Preprocess image for better OCR results.
@@ -559,28 +570,23 @@ async def lifespan(app: FastAPI):
     print(f"  Host: {config.host}:{config.port}")
     print(f"  API Key: {'Configured' if config.api_key else 'Not configured'}")
     print(f"  OCR Engine: {config.ocr_engine} (with fallback)")
-    print(f"  Ollama: {config.ollama_url or 'Not configured'}")
+    print(f"  Allowed S3 Buckets: {config.allowed_s3_buckets or 'None specified'}")
     print(f"  Bedrock: {'Configured' if config.aws_region else 'Not configured'}")
 
     app.state.ocr_service = OCRService(engine=config.ocr_engine)
     ocr_status = "Available" if app.state.ocr_service.available else "Failed"
     print(f"  OCR: {ocr_status}")
 
-    app.state.ollama_service = None
-    if config.ollama_url:
-        from api_server import OllamaService
-
-        app.state.ollama_service = OllamaService(config.ollama_url)
-        ollama_status = (
-            "Available" if app.state.ollama_service.is_available() else "Failed"
-        )
-        print(f"  Ollama: {ollama_status}")
-
     app.state.bedrock_service = BedrockService()
     bedrock_status = (
         "Available" if app.state.bedrock_service.is_available() else "Not configured"
     )
     print(f"  Bedrock: {bedrock_status}")
+
+    app.state.bedrock_client = BedrockClient()
+    print(
+        f"  Bedrock Client: {'Available' if app.state.bedrock_client.is_available() else 'Not configured'}"
+    )
 
     if not app.state.ocr_service.available:
         print("\n  WARNING: OCR not available!")
@@ -590,7 +596,7 @@ async def lifespan(app: FastAPI):
     print("\nEndpoints:")
     print("  POST /extract/text   - Extract plain text")
     print("  POST /extract/bbox   - Extract text with bounding boxes")
-    print("  POST /harvest        - Structured extraction (requires LLM)")
+    print("  POST /harvest        - Extract text + Bedrock Q&A")
     print("  GET  /health         - Health check")
     print("  GET  /models         - List available models")
     print("=" * 60)
@@ -607,13 +613,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Shoeshine API",
     description="""
-## Document Scanning Layer for Local LLMs
+## Document Scanning Layer for AWS Bedrock
 
 **Shoeshine** is a lightweight document-to-text translator using OCR techniques.
 
 ### Philosophy
 - **This is NOT AI** - Pure OCR, no training, no retention
-- **Model-agnostic** - Output works with any local model (Ollama, Bedrock, LM Studio)
+- **AWS-Only** - Uses Bedrock for document Q&A
 - **Zero data retention** - Documents are never stored
 
 ### OCR Engines
@@ -649,12 +655,9 @@ async def health_check() -> HealthResponse:
     """Health check endpoint."""
     config = ApiConfig.from_env()
     ocr_available = app.state.ocr_service.available
-    ollama_available = (
-        app.state.ollama_service.is_available() if app.state.ollama_service else False
-    )
     bedrock_available = app.state.bedrock_service.is_available()
 
-    all_healthy = ocr_available
+    all_healthy = ocr_available and bedrock_available
 
     return HealthResponse(
         status="healthy" if all_healthy else "degraded",
@@ -662,7 +665,6 @@ async def health_check() -> HealthResponse:
         version="1.0.0",
         services={
             "ocr": ocr_available,
-            "ollama": ollama_available,
             "bedrock": bedrock_available,
         },
         ocr_engine=config.ocr_engine,
@@ -675,8 +677,7 @@ async def list_models() -> ModelsResponse:
     return ModelsResponse(
         data=[
             ModelInfo(id="shoeshine-ocr", owned_by="shoeshine"),
-            ModelInfo(id="shoeshine-harvest", owned_by="shoeshine"),
-            ModelInfo(id="ollama", owned_by="ollama"),
+            ModelInfo(id="bedrock", owned_by="aws"),
         ]
     )
 
@@ -700,13 +701,16 @@ async def extract_text(
 
     try:
         content = await document.read()
-        img = decode_upload_file(content)
         await document.seek(0)
 
-        if preprocess:
-            img = preprocess_for_ocr(img)
-
-        result = app.state.ocr_service.process(img)
+        if is_pdf_file(content):
+            images = decode_pdf_pages(content)
+            result = process_document_pages(images, preprocess)
+        else:
+            img = decode_upload_file(content)
+            if preprocess:
+                img = preprocess_for_ocr(img)
+            result = app.state.ocr_service.process(img)
 
         if not result["success"]:
             raise HTTPException(
@@ -732,13 +736,15 @@ async def extract_text(
 
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
 
 
 @app.post("/extract/bbox", response_model=ExtractResponse, tags=["Extraction"])
 async def extract_with_bbox(
-    document: UploadFile = File(..., description="Document file"),
+    document: UploadFile = File(..., description="Document file (image or PDF)"),
     language: str = Form("en"),
     preprocess: bool = Form(True),
     x_api_key: Optional[str] = Header(None, description="API key for authentication"),
@@ -752,13 +758,16 @@ async def extract_with_bbox(
 
     try:
         content = await document.read()
-        img = decode_upload_file(content)
         await document.seek(0)
 
-        if preprocess:
-            img = preprocess_for_ocr(img)
-
-        result = app.state.ocr_service.process(img)
+        if is_pdf_file(content):
+            images = decode_pdf_pages(content)
+            result = process_document_pages(images, preprocess)
+        else:
+            img = decode_upload_file(content)
+            if preprocess:
+                img = preprocess_for_ocr(img)
+            result = app.state.ocr_service.process(img)
 
         if not result["success"]:
             raise HTTPException(
@@ -784,78 +793,127 @@ async def extract_with_bbox(
 
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
 
 
+class HarvestRequest(BaseModel):
+    """Harvest endpoint request."""
+
+    document: Optional[str] = None
+    s3_bucket: Optional[str] = None
+    s3_key: Optional[str] = None
+    question: str = "Summarize this document"
+    prompt: str = (
+        "Answer questions about this document based ONLY on the text extracted."
+    )
+    temperature: float = 0.0
+
+
 @app.post("/harvest", response_model=HarvestResponse, tags=["Extraction"])
 async def harvest_document(
-    document: UploadFile = File(..., description="Document file"),
-    fields: str = Form("", description="Comma-separated fields to extract"),
-    system_prompt: Optional[str] = Form(None, description="Custom system prompt"),
+    request: HarvestRequest,
     x_api_key: Optional[str] = Header(None, description="API key for authentication"),
 ) -> HarvestResponse:
-    """Extract structured key-value pairs from document."""
+    """Extract text from document and send to Bedrock for Q&A."""
     start_time = time.time()
     verify_api_key(x_api_key)
-
-    config = ApiConfig.from_env()
 
     if not app.state.ocr_service.available:
         raise HTTPException(status_code=503, detail="OCR not available")
 
-    if not config.ollama_url and not config.aws_region:
+    if not app.state.bedrock_client.is_available():
         raise HTTPException(
             status_code=503,
-            detail="No LLM configured. Set SHOESHINE_OLLAMA_URL or AWS credentials.",
+            detail="Bedrock not available. Configure AWS credentials.",
         )
 
     try:
-        content = await document.read()
-        img = decode_upload_file(content)
-        await document.seek(0)
+        image_bytes = None
+        if request.document:
+            try:
+                image_bytes = base64.b64decode(request.document)
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid base64 document")
+        elif request.s3_bucket and request.s3_key:
+            config = ApiConfig.from_env()
+            allowed_buckets = (
+                config.allowed_s3_buckets.split(",")
+                if config.allowed_s3_buckets
+                else []
+            )
+            if allowed_buckets and request.s3_bucket not in allowed_buckets:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"S3 bucket '{request.s3_bucket}' not in allowed list",
+                )
+            try:
+                import boto3
 
-        img = preprocess_for_ocr(img)
+                s3_client = boto3.client("s3")
+                response = s3_client.get_object(
+                    Bucket=request.s3_bucket, Key=request.s3_key
+                )
+                image_bytes = response["Body"].read()
+            except Exception as e:
+                error_str = str(e)
+                if "NoSuchKey" in error_str or "not found" in error_str.lower():
+                    raise HTTPException(status_code=404, detail="S3 object not found")
+                elif "NoSuchBucket" in error_str or "bucket" in error_str.lower():
+                    raise HTTPException(status_code=404, detail="S3 bucket not found")
+                else:
+                    raise HTTPException(
+                        status_code=403, detail=f"S3 access denied: {error_str}"
+                    )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide either 'document' (base64) or 's3_bucket' + 's3_key'",
+            )
 
-        ocr_result = app.state.ocr_service.process(img)
+        if not image_bytes:
+            raise HTTPException(status_code=400, detail="No document content received")
+
+        try:
+            img = decode_upload_file(image_bytes)
+            img = preprocess_for_ocr(img)
+            ocr_result = app.state.ocr_service.process(img)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"OCR extraction failed: {str(e)}"
+            )
 
         if not ocr_result["success"]:
             raise HTTPException(
                 status_code=500, detail=f"OCR failed: {ocr_result.get('error')}"
             )
 
-        field_list = [f.strip() for f in fields.split(",") if f.strip()]
-
-        items = []
-        if app.state.ollama_service and app.state.ollama_service.is_available():
-            items = app.state.ollama_service.extract_structured(
-                ocr_result["text"], field_list, system_prompt
+        try:
+            answer = app.state.bedrock_client.ask(
+                text=ocr_result["text"],
+                question=request.question,
+                system_prompt=request.prompt,
+                temperature=request.temperature,
             )
-        elif app.state.bedrock_service.is_available():
-            items = app.state.bedrock_service.extract_structured(
-                ocr_result["text"], field_list, system_prompt
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"Bedrock request failed: {str(e)}"
             )
-
-        harvest_items = [
-            HarvestItem(
-                key=item.get("key", ""),
-                value=item.get("value", ""),
-                where=item.get("where"),
-            )
-            for item in items
-        ]
-
-        processing_time = int((time.time() - start_time) * 1000)
 
         return HarvestResponse(
             success=True,
-            items=harvest_items,
-            processing_time_ms=processing_time,
-            usage=UsageInfo.from_text(ocr_result["text"]),
+            extracted_text=ocr_result["text"],
+            answer=answer,
+            model=app.state.bedrock_client.model_id,
+            processing_time_ms=(time.time() - start_time) * 1000,
         )
 
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Harvest failed: {str(e)}")
 

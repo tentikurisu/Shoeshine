@@ -46,6 +46,7 @@ class StorageOptions(BaseModel):
 
     s3_bucket: Optional[str] = None
     s3_prefix: str = "documents/"
+    allowed_s3_buckets: str = ""
     dynamodb_table: Optional[str] = None
     retention_hours: int = 24
 

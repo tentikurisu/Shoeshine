@@ -3,7 +3,7 @@
 Shoeshine + AWS Bedrock: Document Processing Example
 
 This example demonstrates how to use Shoeshine with AWS Bedrock
-for document processing and structured extraction.
+for document processing and structured extraction using the harvest endpoint.
 
 Prerequisites:
 1. Start Shoeshine: python api_server.py
@@ -19,9 +19,9 @@ import os
 import sys
 import boto3
 import requests
+from typing import Optional
 
 
-# Configuration
 SHOESHINE_URL = os.getenv("SHOESHINE_URL", "http://localhost:8000")
 SHOESHINE_API_KEY = os.getenv("SHOESHINE_API_KEY", "")
 BEDROCK_MODEL = os.getenv("BEDROCK_MODEL", "anthropic.claude-sonnet-4-20250507")
@@ -30,82 +30,91 @@ AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "")
 
 
-def extract_text_from_document(image_path: str) -> str:
-    """Extract text from document using Shoeshine API."""
+def harvest_document(
+    image_path: str,
+    question: str = "Summarize this document",
+    prompt: Optional[str] = None,
+) -> dict:
+    """Send document to Shoeshine harvest endpoint (extract + Bedrock Q&A)."""
     with open(image_path, "rb") as f:
-        response = requests.post(
-            f"{SHOESHINE_URL}/extract/text",
-            headers={"X-API-Key": SHOESHINE_API_KEY} if SHOESHINE_API_KEY else {},
-            files={"document": f},
-        )
+        document_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+    payload = {
+        "document": document_b64,
+        "question": question,
+        "prompt": prompt
+        or "Answer questions about this document based ONLY on the text extracted.",
+        "temperature": 0.0,
+    }
+
+    headers = {"Content-Type": "application/json"}
+    if SHOESHINE_API_KEY:
+        headers["X-API-Key"] = SHOESHINE_API_KEY
+
+    response = requests.post(
+        f"{SHOESHINE_URL}/harvest",
+        json=payload,
+        headers=headers,
+    )
 
     response.raise_for_status()
-    result = response.json()
-
-    if not result.get("success"):
-        raise RuntimeError(f"Extraction failed: {result.get('error', 'Unknown error')}")
-
-    return result.get("text", "")
+    return response.json()
 
 
-def ask_bedrock(text: str, question: str) -> str:
-    """Send extracted text to AWS Bedrock."""
-    if not AWS_ACCESS_KEY_ID or not AWS_SECRET_ACCESS_KEY:
-        raise ValueError(
-            "AWS credentials not configured. Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY."
-        )
+def harvest_from_s3(
+    s3_bucket: str,
+    s3_key: str,
+    question: str = "Summarize this document",
+    prompt: Optional[str] = None,
+) -> dict:
+    """Send S3 document to Shoeshine harvest endpoint."""
+    payload = {
+        "s3_bucket": s3_bucket,
+        "s3_key": s3_key,
+        "question": question,
+        "prompt": prompt
+        or "Answer questions about this document based ONLY on the text extracted.",
+        "temperature": 0.0,
+    }
 
-    # Create Bedrock client
-    bedrock = boto3.client(
-        "bedrock-runtime",
-        region_name=AWS_REGION,
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+    headers = {"Content-Type": "application/json"}
+    if SHOESHINE_API_KEY:
+        headers["X-API-Key"] = SHOESHINE_API_KEY
+
+    response = requests.post(
+        f"{SHOESHINE_URL}/harvest",
+        json=payload,
+        headers=headers,
     )
 
-    # Construct prompt
-    prompt = f"""Based on the following document text, answer the question.
-
-Document:
-{text}
-
-Question: {question}
-
-Answer based ONLY on the provided document text. If the information is not in the document, state that clearly."""
-
-    # Call Bedrock
-    response = bedrock.converse(
-        modelId=BEDROCK_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        inferenceConfig={
-            "maxTokens": 4096,
-            "temperature": 0.0,
-        },
-    )
-
-    return response["output"]["message"]["content"][0]["text"]
+    response.raise_for_status()
+    return response.json()
 
 
-def process_document(image_path: str, question: str = "Summarize this document"):
-    """Extract text from document and send to Bedrock."""
+def process_document(
+    image_path: str,
+    question: str = "Summarize this document",
+    prompt: Optional[str] = None,
+) -> str:
+    """Process document using Shoeshine harvest endpoint."""
     print(f"\n{'=' * 60}")
     print(f"Processing: {image_path}")
     print(f"{'=' * 60}")
 
-    # Step 1: Extract text
-    print("1. Extracting text from document...")
-    text = extract_text_from_document(image_path)
-    print(f"   Extracted {len(text)} characters")
+    print("1. Sending to Shoeshine harvest endpoint...")
+    result = harvest_document(image_path, question, prompt)
 
-    # Step 2: Send to Bedrock
-    print(f"2. Sending to Bedrock ({BEDROCK_MODEL})...")
-    answer = ask_bedrock(text, question)
+    if not result.get("success"):
+        raise RuntimeError(f"Harvest failed: {result.get('error', 'Unknown error')}")
+
+    print(f"   Extracted {len(result.get('extracted_text', ''))} characters")
+    print(f"2. Answer from Bedrock ({result.get('model')}):")
 
     print(f"{'=' * 60}")
-    print("3. Answer:")
-    print(answer)
+    print("Answer:")
+    print(result.get("answer", ""))
 
-    return answer
+    return result.get("answer", "")
 
 
 def main():

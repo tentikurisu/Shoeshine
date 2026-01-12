@@ -1,38 +1,95 @@
 # Shoeshine - Document Scanning Layer for Local LLMs
 
-**A lightweight, model-agnostic document scanning service using OCR techniques.**
+**A document-to-text translation layer using deep learning OCR with image preprocessing.**
 
-<p align="center">
-  <em>This is NOT AI. Pure OCR, no training, no retention.</em>
-</p>
 ---
 
 ## What is Shoeshine?
 
-Shoeshine is a **document-to-text translator** that extracts text from images and PDFs using OCR (Optical Character Recognition). It then feeds this text to local LLMs like Ollama, LM Studio, or cloud models like AWS Bedrock.
+Shoeshine extracts text from images and PDFs using OCR, then feeds the extracted text to local LLMs (Ollama, LM Studio) or cloud models (AWS Bedrock). It is **not an LLM itself** - it is a tool that converts documents to text.
 
 ### Key Features
 
 | Feature | Description |
 |--------|-------------|
-| **Model-agnostic** | Works with any LLM - Ollama, Bedrock, LM Studio, vLLM |
+| **Deep Learning OCR** | EasyOCR (CNN-based) with image preprocessing pipeline for high accuracy |
+| **Multiple Engines** | EasyOCR (default, high accuracy), Tesseract (fast fallback), PaddleOCR (available, not integrated) |
 | **Local Processing** | OCR runs locally - your data never leaves your infrastructure |
-| **Zero Retention** | Documents are never stored or cached (configurable) |
-| **Multiple OCR Engines** | EasyOCR (default), Tesseract (fallback) |
-| **Structured Extraction** | Optional LLM integration for key-value extraction |
-| **OpenAI-Compatible** | Standardized API responses |
+| **Model-agnostic** | Works with any LLM - Ollama, Bedrock, LM Studio, vLLM |
+| **Structured Extraction** | Optional LLM integration for key-value extraction (harvest endpoint) |
+| **Zero Retention** | Documents processed in memory, never stored or cached |
 
 ---
 
-## This is NOT AI
+## Shoeshine vs. AI Systems
 
-| Aspect | Description |
-|--------|-------------|
-| **Pure OCR** | Uses Optical Character Recognition, not neural AI |
-| **No Training** | Your documents never train any model |
-| **No Retention** | Extracted text is returned, not stored |
-| **No Embeddings** | No vector storage or RAG system |
-| **Translation** | Document-to-text translator only |
+| Aspect | Shoeshine | AI Systems (LLMs) |
+|--------|-----------|-------------------|
+| **Technology** | Deep learning OCR (EasyOCR) | Transformer-based LLMs |
+| **What it does** | Extracts text from images | Generates and reasons about text |
+| **Training** | No training on your data | May train on public data |
+| **Retention** | Zero - processed in memory | Depends on implementation |
+| **Use case** | Document → text | Text → answer/analysis |
+
+Shoeshine is a **tool for text extraction**. The optional `harvest` endpoint feeds extracted text to LLMs (Ollama, Bedrock) for structured extraction, but Shoeshine itself is not an LLM and doesn't generate responses.
+
+---
+
+## How OCR Works
+
+Shoeshine uses a two-stage pipeline for high-accuracy text extraction:
+
+### Stage 1: Image Preprocessing
+
+Before OCR runs, images are enhanced to maximize accuracy:
+
+| Step | Operation | Purpose |
+|------|-----------|---------|
+| 1 | Upscale to ≥1400px | More pixels = more detail for the model |
+| 2 | Grayscale conversion | Removes color noise, focuses on shapes |
+| 3 | Median blur (k=3) | Removes speckle noise from scanning |
+| 4 | CLAHE (clip=2.0, 8x8) | Adaptive contrast - makes faint text visible |
+| 5 | Otsu thresholding | Optimal black/white separation |
+| 6 | Morphological opening | Removes paper grain and small artifacts |
+
+### Stage 2: Deep Learning OCR
+
+- **Engine**: EasyOCR (CNN-based neural network)
+- **Model**: ~300MB, downloaded on first run
+- **Languages**: English (configurable)
+- **Output**: Text + confidence scores + bounding boxes
+
+**Why preprocessing matters**: EasyOCR is already highly accurate due to its deep learning models. The preprocessing pipeline ensures the input image is clean and high-contrast, which significantly improves OCR accuracy on real-world documents with scanning artifacts, faded ink, or poor lighting.
+
+---
+
+## OCR Engines
+
+### EasyOCR (Default)
+
+- **Type**: CNN-based deep learning
+- **Accuracy**: High (neural network models)
+- **Size**: ~300MB (downloaded on first run)
+- **Dependencies**: Pure Python, no system install required
+- **Speed**: Slower than Tesseract, higher accuracy
+
+### Tesseract (Fallback)
+
+- **Type**: Traditional OCR (LSTM-based)
+- **Accuracy**: Medium (legacy technology)
+- **Size**: Lightweight (~20MB)
+- **Dependencies**: Requires system installation
+- **Speed**: Fast, good for simple documents
+
+### PaddleOCR (Available)
+
+- **Type**: Deep learning OCR (PP-OCRv2/v3)
+- **Accuracy**: High
+- **Status**: Available in codebase, not currently integrated in API
+- **Note**: Can be enabled via configuration if needed
+
+**Why EasyOCR by default?**
+Deep learning models significantly outperform traditional OCR on complex documents, faded text, varied fonts, and poor scan quality.
 
 ---
 
@@ -65,13 +122,13 @@ curl -X POST http://localhost:8000/extract/bbox \
 ```
 
 > **Note:** Sample documents are available in `data/raw/` for testing. Use `data/raw/doc_00000_9795.jpg` as an example.
-```
 
 ### Option 2: Local Development
 
 ```bash
 # Create virtual environment
 python -m venv .venv
+.venv\Scripts\activate
 .venv\Scripts\pip install -r requirements.txt
 
 # Start server
@@ -299,24 +356,15 @@ aws configure
 | `SHOESHINE_API_KEY` | - | API key for authentication (optional) |
 | `SHOESHINE_OLLAMA_URL` | - | Ollama URL for harvest endpoint (optional) |
 | `SHOESHINE_LLM_MODEL` | `llama3` | LLM model for harvest |
-| `SHOESHINE_OCR_ENGINE` | `easyocr` | OCR engine: `easyocr` or `tesseract` |
+| `SHOESHINE_OCR_ENGINE` | `easyocr` | OCR engine: `easyocr` (default, high accuracy) or `tesseract` (fast fallback) |
 | `AWS_REGION` | - | AWS region for Bedrock (optional) |
 | `AWS_ACCESS_KEY_ID` | - | AWS access key ID (optional) |
 | `AWS_SECRET_ACCESS_KEY` | - | AWS secret access key (optional) |
 | `BEDROCK_MODEL_ID` | `anthropic.claude-sonnet-4-20250507` | Bedrock model ID |
 
-### OCR Engines
-
-**EasyOCR (Default)**
-- Pure Python, no system dependencies
-- Automatic model download (~300MB on first run)
-- Good accuracy on clear text
-
-**Tesseract (Fallback)**
-- Very fast
-- Small models
-- Requires system installation
-- See [installation guide](https://github.com/tesseract-ocr/tesseract/wiki)
+**Engine Selection Guide:**
+- Use `easyocr` (default) for best accuracy on complex documents
+- Use `tesseract` for speed on simple, clean documents
 
 ---
 
@@ -331,7 +379,8 @@ aws configure
 └───────────────────────────────────────┘
                   Shoeshine API Server
                   - FastAPI (web framework)
-                  - EasyOCR (OCR engine)
+                  - EasyOCR (CNN-based OCR)
+                  - Image preprocessing pipeline
                   - Optional: Ollama/Bedrock
                   ↓
                   Zero data retention

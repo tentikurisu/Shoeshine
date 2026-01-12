@@ -63,7 +63,13 @@ variable "enable_bedrock" {
 }
 
 variable "s3_bucket" {
-  description = "Optional S3 bucket for document storage (leave empty to skip). Use bucket name or ARN."
+  description = "Optional S3 bucket for document storage (leave empty to skip). Use bucket name or ARN. NOTE: In aws-bedrock-only branch, bucket creation is disabled - use existing buckets."
+  type        = string
+  default     = ""
+}
+
+variable "allowed_s3_buckets" {
+  description = "Comma-separated list of S3 buckets allowed for document retrieval. Leave empty to allow all buckets (not recommended)."
   type        = string
   default     = ""
 }
