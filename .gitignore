@@ -41,3 +41,10 @@ htmlcov/
 
 # Docker
 .docker/
+
+# Documentation & Tracking (corp deployment only)
+TODO.md
+README_AWS.md
+DEPLOYMENT.md
+DEPLOY_LAMBDA.md
+PRIVACY.md
