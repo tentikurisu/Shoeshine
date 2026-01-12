@@ -78,21 +78,20 @@ resource "aws_iam_role_policy_attachment" "lambda_basic" {
 
 # Custom IAM policy for Lambda (Bedrock + S3)
 data "aws_iam_policy_document" "lambda_policy" {
-  dynamic "statement" {
-    for_each = var.enable_bedrock ? [1] : []
-    content {
-      sid = "BedrockAccess"
+  # Bedrock access (always enabled in aws-bedrock-only branch)
+  statement {
+    sid = "BedrockAccess"
 
-      actions = [
-        "bedrock:InvokeModel"
-      ]
+    actions = [
+      "bedrock:InvokeModel"
+    ]
 
-      resources = [
-        "arn:aws:bedrock:${var.aws_region}::foundation-model/${var.bedrock_model_id}"
-      ]
-    }
+    resources = [
+      "arn:aws:bedrock:${var.aws_region}::foundation-model/${var.bedrock_model_id}"
+    ]
   }
 
+  # S3 access for allowed buckets
   dynamic "statement" {
     for_each = var.allowed_s3_buckets != "" ? split(",", var.allowed_s3_buckets) : []
     content {

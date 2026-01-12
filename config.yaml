@@ -19,7 +19,7 @@ retrieval:
   top_k: 8
 
 bedrock:
-  model_id: "anthropic.claude-sonnet-4-20250507"
+  model_id: ""
 
 extraction:
   output_format: "both"

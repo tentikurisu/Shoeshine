@@ -19,7 +19,7 @@ services:
       - AWS_REGION=${AWS_REGION:-us-east-1}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - BEDROCK_MODEL_ID=anthropic.claude-sonnet-4-20250507
+      - BEDROCK_MODEL_ID=${BEDROCK_MODEL_ID}
 
       # Disable PaddleOCR model check warning
       - PADDLEX_DISABLE_MODEL_SOURCE_CHECK=True

@@ -43,7 +43,7 @@ cp terraform.tfvars.example terraform.tfvars
 aws_region   = "us-east-1"
 environment  = "production"
 api_key      = "your-generated-api-key"
-bedrock_model_id = "anthropic.claude-sonnet-4-20250507"
+bedrock_model_id = "<your-bedrock-model-id>"
 allowed_s3_buckets = "corp-docs,team-bucket"
 ```
 
@@ -140,7 +140,7 @@ Or with S3:
   "success": true,
   "extracted_text": "Invoice #12345...",
   "answer": "The total amount is $1,234.56",
-  "model": "anthropic.claude-sonnet-4-20250507",
+  "model": "<your-bedrock-model-id>",
   "processing_time_ms": 5234.5
 }
 ```
@@ -151,7 +151,7 @@ Or with S3:
 |----------|----------|---------|-------------|
 | `SHOESHINE_API_KEY` | Yes | - | API key for authentication |
 | `AWS_REGION` | No | `us-east-1` | AWS region |
-| `BEDROCK_MODEL_ID` | No | `anthropic.claude-sonnet-4-20250507` | Bedrock model |
+| `BEDROCK_MODEL_ID` | Yes | - | Bedrock model ID (e.g., anthropic.claude-sonnet-4-20250507) |
 | `ALLOWED_S3_BUCKETS` | No | `` | Comma-separated S3 buckets |
 
 ## S3 Integration

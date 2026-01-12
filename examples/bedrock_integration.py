@@ -24,7 +24,7 @@ from typing import Optional
 
 SHOESHINE_URL = os.getenv("SHOESHINE_URL", "http://localhost:8000")
 SHOESHINE_API_KEY = os.getenv("SHOESHINE_API_KEY", "")
-BEDROCK_MODEL = os.getenv("BEDROCK_MODEL", "anthropic.claude-sonnet-4-20250507")
+BEDROCK_MODEL = os.getenv("BEDROCK_MODEL", "")
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "")
@@ -128,7 +128,7 @@ def main():
         )
         print("  SHOESHINE_API_KEY  - Shoeshine API key (optional)")
         print(
-            "  BEDROCK_MODEL      - Bedrock model (default: anthropic.claude-sonnet-4-20250507)"
+            "  BEDROCK_MODEL      - Bedrock model ID (e.g., anthropic.claude-sonnet-4-20250507)"
         )
         print("  AWS_REGION         - AWS region (default: us-east-1)")
         print("  AWS_ACCESS_KEY_ID   - AWS access key ID")

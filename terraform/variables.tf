@@ -51,15 +51,9 @@ variable "lambda_reserved_concurrency" {
 }
 
 variable "bedrock_model_id" {
-  description = "Bedrock model ID"
+  description = "Bedrock model ID (e.g., anthropic.claude-sonnet-4-20250507)"
   type        = string
-  default     = "anthropic.claude-sonnet-4-20250507"
-}
-
-variable "enable_bedrock" {
-  description = "Enable Bedrock integration"
-  type        = bool
-  default     = true
+  default     = ""
 }
 
 variable "s3_bucket" {

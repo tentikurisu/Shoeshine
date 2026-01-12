@@ -11,14 +11,17 @@ lambda_timeout            = 300
 lambda_reserved_concurrency = 0
 
 # Bedrock Configuration
-enable_bedrock = true
-bedrock_model_id = "anthropic.claude-sonnet-4-20250507"
+# REQUIRED: Configure your Bedrock model ID
+# Examples:
+#   - anthropic.claude-sonnet-4-20250507
+#   - meta.llama3-2-90b-instruct-v1:0
+#   - amazon.titan-text-premier-v1:0
+bedrock_model_id = ""
 
-# Optional S3 Bucket
-# Leave empty to skip bucket creation, or provide existing bucket name
-# If providing new bucket name, Terraform will create it
-# Can also use ARN format: arn:aws:s3:::my-bucket-name
-s3_bucket = ""
+# S3 Configuration
+# Use existing buckets only (bucket creation disabled in this branch)
+# Comma-separated list of allowed buckets for document retrieval
+allowed_s3_buckets = ""
 
 # ECR Image Tag
 ecr_image_tag = "latest"

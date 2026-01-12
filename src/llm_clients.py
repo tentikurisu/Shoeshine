@@ -62,9 +62,7 @@ class BedrockClient(LLMClient):
 
     def __init__(self, region: Optional[str] = None, model_id: Optional[str] = None):
         self.region = region or os.getenv("AWS_REGION", "us-east-1")
-        self.model_id = model_id or os.getenv(
-            "BEDROCK_MODEL_ID", "anthropic.claude-sonnet-4-20250507"
-        )
+        self.model_id = model_id or os.getenv("BEDROCK_MODEL_ID", "")
         self.client = boto3.client("bedrock-runtime", region_name=self.region)
         self.sts = boto3.client("sts", region_name=self.region)
 

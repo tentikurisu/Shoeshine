@@ -119,7 +119,7 @@ class AskResponse(BaseModel):
     answer: str
     extracted_text: str
     llm: str = "bedrock"
-    model: str = "anthropic.claude-sonnet-4-20250507"
+    model: str = ""
     processing_time_ms: Optional[int] = None
 
 
@@ -177,9 +177,7 @@ class ApiConfig:
             aws_region=os.getenv("AWS_REGION"),
             aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
             aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-            bedrock_model_id=os.getenv(
-                "BEDROCK_MODEL_ID", "anthropic.claude-sonnet-4-20250507"
-            ),
+            bedrock_model_id=os.getenv("BEDROCK_MODEL_ID", ""),
             allowed_s3_buckets=os.getenv("ALLOWED_S3_BUCKETS", ""),
             ocr_engine=os.getenv("SHOESHINE_OCR_ENGINE", "easyocr"),
         )
@@ -367,7 +365,7 @@ class BedrockService:
         if not self.is_available():
             return []
 
-        model_id = self.config.bedrock_model_id or "anthropic.claude-sonnet-4-20250507"
+        model_id = self.config.bedrock_model_id
 
         default_system = """You are extracting structured data from a document.
 Extract requested fields as JSON array of objects.
