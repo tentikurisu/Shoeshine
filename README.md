@@ -148,32 +148,6 @@ All endpoints accept `X-API-Key` header. Configure via `SHOESHINE_API_KEY` envir
 
 ---
 
-## Configuration
-
-### Terraform Variables
-
-```hcl
-# Required
-bedrock_model_id = "anthropic.claude-sonnet-4-20250507"
-allowed_s3_buckets = "bucket1,bucket2"
-
-# Optional
-aws_region = "us-east-1"
-environment = "production"
-lambda_memory = 2048
-lambda_timeout = 300
-```
-
-### Supported Bedrock Models
-
-This branch works with **non-vision** Bedrock text models:
-- Claude (Anthropic): `anthropic.claude-sonnet-4-20250507`
-- Llama (Meta): `meta.llama3-2-90b-instruct-v1:0`
-- Titan (Amazon): `amazon.titan-text-premier-v1:0`
-- Jurassic (AI21): `ai21.jamba-1-5-large-v1:0`
-
----
-
 ## Project Structure
 
 ```
@@ -196,50 +170,3 @@ shoeshine/
 │   └── basic_usage.py
 └── tests/                     # Test suite
 ```
-
----
-
-## Privacy & Security
-
-- **No Data Retention**: Documents processed in memory, never stored
-- **No Training Data**: Extracted text never trains any model
-- **AWS-Native**: All processing in your AWS account
-- **API Key Auth**: Optional authentication
-
----
-
-## Troubleshooting
-
-### Bedrock Access Denied
-
-**Error:** `AccessDenied` or `ValidationException`
-
-**Solutions:**
-1. Configure AWS credentials: `aws configure`
-2. Ensure Bedrock is enabled in your AWS account
-3. Verify model ID is available in your region
-4. Check IAM permissions include `bedrock:InvokeModel`
-
-### S3 Access Denied
-
-**Error:** `S3 access denied`
-
-**Solutions:**
-1. Verify bucket is in `allowed_s3_buckets` list
-2. Check Lambda IAM role has `s3:GetObject` permission
-3. Ensure bucket exists and is accessible
-
-### OCR Not Available
-
-**Error:** `OCR not available`
-
-**Solutions:**
-1. Check CloudWatch logs for EasyOCR initialization errors
-2. Ensure Lambda has enough memory (2048MB+ recommended)
-3. First request may take 30+ seconds (cold start with model download)
-
----
-
-## License
-
-MIT License
