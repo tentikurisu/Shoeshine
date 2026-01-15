@@ -13,15 +13,32 @@ Usage:
     docker compose up --build
 
 Environment Variables:
-    SHOESHINE_API_KEY           - API key for authentication (optional)
-    SHOESHINE_HOST              - Host to bind (default: 0.0.0.0)
-    SHOESHINE_PORT              - Port to listen (default: 8000)
-    AWS_REGION                  - AWS region for Bedrock (optional)
-    AWS_ACCESS_KEY_ID           - AWS credentials (optional)
-    AWS_SECRET_ACCESS_KEY       - AWS credentials (optional)
-    BEDROCK_MODEL_ID            - Bedrock model ID (optional)
-    ALLOWED_S3_BUCKETS          - Comma-separated S3 buckets for document retrieval
-    SHOESHINE_OCR_ENGINE        - OCR engine: easyocr (default), pytesseract
+    # Deployment
+    SHOESHINE_DEPLOY_MODE         - Deployment mode: lambda (default) or ecs
+    SHOESHINE_ENV                 - Environment: local, lambda, ecs
+
+    # Server
+    SHOESHINE_HOST                - Host to bind (default: 0.0.0.0)
+    SHOESHINE_PORT                - Port to listen (default: 8000)
+    SHOESHINE_API_KEY             - API key for authentication (optional)
+
+    # OCR Configuration
+    SHOESHINE_DEFAULT_OCR_ENGINE  - Default engine: auto, docling, easyocr, textract, tesseract
+    SHOESHINE_OCR_IDLE_TIMEOUT    - Idle timeout in seconds (default: 600)
+
+    # Admin (for /admin endpoints)
+    SHOESHINE_ADMIN_API_KEY       - Admin API key for OCR management endpoints
+
+    # AWS
+    AWS_REGION                    - AWS region for Bedrock and Textract
+    AWS_ACCESS_KEY_ID             - AWS credentials (optional - uses IAM role in Lambda/ECS)
+    AWS_SECRET_ACCESS_KEY         - AWS credentials (optional)
+    BEDROCK_MODEL_ID              - Bedrock model ID (e.g., anthropic.claude-sonnet-4-20250507)
+    ALLOWED_S3_BUCKETS            - Comma-separated S3 buckets for document retrieval
+
+OCR Engines:
+    Lambda:   textract, easyocr
+    ECS/Local: docling, easyocr, textract, tesseract
 """
 
 import os
