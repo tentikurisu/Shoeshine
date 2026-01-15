@@ -11,6 +11,7 @@ requests>=2.32.0
 tqdm>=4.66.0
 easyocr>=1.7.0
 pytesseract>=0.3.10
+docling>=2.0.0
 
 # API Server
 fastapi>=0.109.0

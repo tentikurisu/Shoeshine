@@ -86,6 +86,8 @@ class ExtractResponse(BaseModel):
     usage: Optional[UsageInfo] = None
     model: str = "shoeshine-ocr"
     processing_time_ms: Optional[int] = None
+    ocr_engine: str = "unknown"
+    engine_loaded: bool = False
 
 
 class HarvestItem(BaseModel):
@@ -147,6 +149,8 @@ class HealthResponse(BaseModel):
     version: str = "1.0.0"
     services: Dict[str, bool]
     ocr_engine: str
+    ocr_loaded_engine: Optional[str] = None
+    ocr_idle_seconds: Optional[float] = None
 
 
 # ============================================================================
@@ -166,7 +170,9 @@ class ApiConfig:
     aws_secret_access_key: Optional[str]
     bedrock_model_id: Optional[str]
     allowed_s3_buckets: str
-    ocr_engine: str
+    default_ocr_engine: str
+    ocr_idle_timeout_seconds: int
+    admin_api_key: Optional[str]
 
     @classmethod
     def from_env(cls) -> ApiConfig:
@@ -179,7 +185,11 @@ class ApiConfig:
             aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
             bedrock_model_id=os.getenv("BEDROCK_MODEL_ID", ""),
             allowed_s3_buckets=os.getenv("ALLOWED_S3_BUCKETS", ""),
-            ocr_engine=os.getenv("SHOESHINE_OCR_ENGINE", "easyocr"),
+            default_ocr_engine=os.getenv("SHOESHINE_DEFAULT_OCR_ENGINE", "easyocr"),
+            ocr_idle_timeout_seconds=int(
+                os.getenv("SHOESHINE_OCR_IDLE_TIMEOUT", "600")
+            ),
+            admin_api_key=os.getenv("SHOESHINE_ADMIN_API_KEY"),
         )
 
 
@@ -334,6 +344,240 @@ class OCRService:
         }
 
 
+class DoclingOCRService:
+    """OCR service using Docling."""
+
+    def __init__(self):
+        try:
+            from docling.document_converter import DocumentConverter
+
+            self.converter = DocumentConverter()
+            self.available = True
+        except Exception as e:
+            print(f"Docling initialization failed: {e}")
+            self.converter = None
+            self.available = False
+
+    def process(self, content: bytes) -> Dict[str, Any]:
+        """Process document content and return extracted text."""
+        if not self.available:
+            return {
+                "success": False,
+                "error": "Docling not available",
+                "text": "",
+                "items": [],
+            }
+
+        try:
+            import tempfile
+            import os
+
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                tmp.write(content)
+                tmp_path = tmp.name
+
+            try:
+                result = self.converter.convert(tmp_path)
+                text = result.document.export_to_text()
+
+                items = []
+                if hasattr(result.document, "export_to_dict"):
+                    doc_dict = result.document.export_to_dict()
+                    if "pages" in doc_dict:
+                        for page in doc_dict["pages"]:
+                            if "elements" in page:
+                                for elem in page["elements"]:
+                                    if "text" in elem:
+                                        items.append(
+                                            {
+                                                "text": elem["text"],
+                                                "confidence": 1.0,
+                                                "bbox": elem.get("bbox", [0, 0, 0, 0]),
+                                            }
+                                        )
+
+                return {"success": True, "text": text, "items": items}
+            finally:
+                os.unlink(tmp_path)
+
+        except Exception as e:
+            return {"success": False, "error": str(e), "text": "", "items": []}
+
+
+class TextractOCRService:
+    """OCR service using AWS Textract."""
+
+    def __init__(self):
+        try:
+            import boto3
+
+            config = ApiConfig.from_env()
+            self.client = boto3.client(
+                "textract",
+                region_name=config.aws_region or "us-east-1",
+                aws_access_key_id=config.aws_access_key_id,
+                aws_secret_access_key=config.aws_secret_access_key,
+            )
+            self.available = True
+        except Exception as e:
+            print(f"Textract initialization failed: {e}")
+            self.client = None
+            self.available = False
+
+    def process(self, content: bytes) -> Dict[str, Any]:
+        """Process image content and return extracted text."""
+        if not self.available:
+            return {
+                "success": False,
+                "error": "Textract not available",
+                "text": "",
+                "items": [],
+            }
+
+        try:
+            response = self.client.detect_document_text(Document={"Bytes": content})
+
+            items = []
+            text_parts = []
+
+            for block in response.get("Blocks", []):
+                if block.get("BlockType") == "LINE":
+                    text = block.get("Text", "")
+                    text_parts.append(text)
+
+                    geometry = block.get("Geometry", {})
+                    bounding_box = geometry.get("BoundingBox", {})
+                    items.append(
+                        {
+                            "text": text,
+                            "confidence": block.get("Confidence", 0.0) / 100.0,
+                            "bbox": [
+                                int(bounding_box.get("Left", 0) * 1000),
+                                int(bounding_box.get("Top", 0) * 1000),
+                                int(
+                                    (
+                                        bounding_box.get("Left", 0)
+                                        + bounding_box.get("Width", 0)
+                                    )
+                                    * 1000
+                                ),
+                                int(
+                                    (
+                                        bounding_box.get("Top", 0)
+                                        + bounding_box.get("Height", 0)
+                                    )
+                                    * 1000
+                                ),
+                            ],
+                        }
+                    )
+
+            text = " ".join(text_parts)
+            return {"success": True, "text": text, "items": items}
+
+        except Exception as e:
+            return {"success": False, "error": str(e), "text": "", "items": []}
+
+
+class OCRServiceFactory:
+    """Factory for OCR services with single active engine mode."""
+
+    def __init__(self):
+        self.current_engine: Optional[str] = None
+        self.current_service: Optional[Any] = None
+        self.last_request_time: Dict[str, float] = {}
+        self._idle_check_task = None
+
+    def _create_service(self, engine: str) -> Any:
+        """Create a new OCR service instance."""
+        if engine == "docling":
+            return DoclingOCRService()
+        elif engine == "easyocr":
+            return EasyOCRService()
+        elif engine == "textract":
+            return TextractOCRService()
+        elif engine == "tesseract":
+            return TesseractOCRService()
+        else:
+            raise ValueError(f"Unknown OCR engine: {engine}")
+
+    def _unload_engine(self) -> bool:
+        """Unload current engine if any."""
+        if self.current_engine:
+            print(f"Unloading OCR engine: {self.current_engine}")
+            self.current_engine = None
+            self.current_service = None
+            return True
+        return False
+
+    def _load_engine(self, engine: str) -> None:
+        """Load specified engine."""
+        print(f"Loading OCR engine: {engine}")
+        self.current_engine = engine
+        self.current_service = self._create_service(engine)
+        self.last_request_time[engine] = time.time()
+
+    def get_service(self, engine: str) -> Any:
+        """Get OCR service, loading engine if necessary."""
+        if engine == "auto":
+            engine_order = ["docling", "easyocr", "textract", "tesseract"]
+            for e in engine_order:
+                try:
+                    service = self.get_service(e)
+                    if service.available:
+                        return service
+                except:
+                    continue
+            raise RuntimeError("No OCR engine available")
+
+        if self.current_engine != engine:
+            self._unload_engine()
+            self._load_engine(engine)
+
+        self.last_request_time[engine] = time.time()
+        return self.current_service
+
+    def unload_current(self) -> Dict[str, Any]:
+        """Explicitly unload current engine."""
+        engine = self.current_engine
+        unloaded = self._unload_engine()
+        return {
+            "success": unloaded,
+            "unloaded_engine": engine,
+            "message": f"Engine '{engine}' unloaded"
+            if unloaded
+            else "No engine was loaded",
+        }
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get current OCR engine status."""
+        idle_seconds = None
+        if self.current_engine and self.current_engine in self.last_request_time:
+            idle_seconds = time.time() - self.last_request_time[self.current_engine]
+
+        return {
+            "current_engine": self.current_engine,
+            "idle_seconds": idle_seconds,
+            "engines_used": list(self.last_request_time.keys()),
+        }
+
+    def check_idle_timeout(self, timeout_seconds: int) -> bool:
+        """Check if current engine should be unloaded due to inactivity."""
+        if not self.current_engine:
+            return False
+
+        last_time = self.last_request_time.get(self.current_engine, 0)
+        idle_time = time.time() - last_time
+
+        if idle_time >= timeout_seconds:
+            print(
+                f"OCR engine '{self.current_engine}' idle for {idle_time:.0f}s, unloading..."
+            )
+            self._unload_engine()
+            return True
+        return False
+
+
 class BedrockService:
     """Service for AWS Bedrock integration."""
 
@@ -452,7 +696,7 @@ def decode_pdf_pages(content: bytes) -> List[np.ndarray]:
 
 
 def process_document_pages(
-    images: List[np.ndarray], preprocess: bool = True
+    images: List[np.ndarray], preprocess: bool = True, ocr_engine: str = "auto"
 ) -> Dict[str, Any]:
     """Process multiple document pages and combine results."""
     from api_server import app
@@ -462,11 +706,16 @@ def process_document_pages(
     has_errors = False
     error_msg = None
 
+    ocr_service = app.state.ocr_factory.get_service(ocr_engine)
+
     for page_num, img in enumerate(images, start=1):
-        if preprocess:
+        if preprocess and ocr_engine not in ["docling"]:
             img = preprocess_for_ocr(img)
 
-        result = app.state.ocr_service.process(img)
+        if ocr_engine == "docling":
+            result = ocr_service.process(img.tobytes())
+        else:
+            result = ocr_service.process(img)
 
         if not result["success"]:
             has_errors = True
@@ -563,13 +812,17 @@ async def lifespan(app: FastAPI):
     print(f"\nConfiguration:")
     print(f"  Host: {config.host}:{config.port}")
     print(f"  API Key: {'Configured' if config.api_key else 'Not configured'}")
-    print(f"  OCR Engine: {config.ocr_engine} (with fallback)")
+    print(f"  Default OCR Engine: {config.default_ocr_engine}")
+    print(f"  OCR Idle Timeout: {config.ocr_idle_timeout_seconds}s")
+    print(
+        f"  Admin API Key: {'Configured' if config.admin_api_key else 'Not configured'}"
+    )
     print(f"  Allowed S3 Buckets: {config.allowed_s3_buckets or 'None specified'}")
     print(f"  Bedrock: {'Configured' if config.aws_region else 'Not configured'}")
 
-    app.state.ocr_service = OCRService(engine=config.ocr_engine)
-    ocr_status = "Available" if app.state.ocr_service.available else "Failed"
-    print(f"  OCR: {ocr_status}")
+    app.state.ocr_factory = OCRServiceFactory()
+    app.state.config = config
+    print(f"  OCR Factory: Initialized")
 
     app.state.bedrock_service = BedrockService()
     bedrock_status = (
@@ -582,15 +835,12 @@ async def lifespan(app: FastAPI):
         f"  Bedrock Client: {'Available' if app.state.bedrock_client.is_available() else 'Not configured'}"
     )
 
-    if not app.state.ocr_service.available:
-        print("\n  WARNING: OCR not available!")
-        print("  Install Tesseract OCR: https://github.com/UB-Mannheim/tesseract/wiki")
-        print("  Or ensure EasyOCR can download its models.")
-
     print("\nEndpoints:")
-    print("  POST /extract/text   - Extract plain text")
+    print("  POST /extract/text   - Extract plain text (with ocr_engine param)")
     print("  POST /extract/bbox   - Extract text with bounding boxes")
     print("  POST /harvest        - Extract text + Bedrock Q&A")
+    print("  POST /admin/ocr/unload - Unload current OCR engine")
+    print("  GET  /admin/ocr/status - Get OCR engine status")
     print("  GET  /health         - Health check")
     print("  GET  /models         - List available models")
     print("=" * 60)
@@ -598,6 +848,7 @@ async def lifespan(app: FastAPI):
     yield
 
     print("\nShutting down...")
+    app.state.ocr_factory.unload_current()
 
 
 # ============================================================================
@@ -647,21 +898,21 @@ app.add_middleware(
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 async def health_check() -> HealthResponse:
     """Health check endpoint."""
-    config = ApiConfig.from_env()
-    ocr_available = app.state.ocr_service.available
+    config = app.state.config
+    status = app.state.ocr_factory.get_status()
     bedrock_available = app.state.bedrock_service.is_available()
 
-    all_healthy = ocr_available and bedrock_available
-
     return HealthResponse(
-        status="healthy" if all_healthy else "degraded",
+        status="healthy" if bedrock_available else "degraded",
         timestamp=datetime.utcnow().isoformat() + "Z",
         version="1.0.0",
         services={
-            "ocr": ocr_available,
+            "ocr": status["current_engine"] is not None,
             "bedrock": bedrock_available,
         },
-        ocr_engine=config.ocr_engine,
+        ocr_engine=config.default_ocr_engine,
+        ocr_loaded_engine=status["current_engine"],
+        ocr_idle_seconds=status["idle_seconds"],
     )
 
 
@@ -681,30 +932,39 @@ async def extract_text(
     document: UploadFile = File(..., description="Document file (image or PDF)"),
     language: str = Form("en", description="Language code"),
     preprocess: bool = Form(True, description="Apply image preprocessing"),
+    ocr_engine: str = Form(
+        "auto", description="OCR engine: docling, easyocr, textract, tesseract, auto"
+    ),
     x_api_key: Optional[str] = Header(None, description="API key for authentication"),
 ) -> ExtractResponse:
     """Extract plain text from a document."""
     start_time = time.time()
     verify_api_key(x_api_key)
 
-    if not app.state.ocr_service.available:
-        raise HTTPException(
-            status_code=503,
-            detail="OCR not available. Install Tesseract or ensure EasyOCR models are downloaded.",
-        )
-
     try:
         content = await document.read()
         await document.seek(0)
 
+        engine_was_loaded = app.state.ocr_factory.current_engine != ocr_engine
+        ocr_service = app.state.ocr_factory.get_service(ocr_engine)
+
+        if not ocr_service.available:
+            raise HTTPException(
+                status_code=503,
+                detail=f"OCR engine '{ocr_engine}' not available.",
+            )
+
         if is_pdf_file(content):
             images = decode_pdf_pages(content)
-            result = process_document_pages(images, preprocess)
+            result = process_document_pages(images, preprocess, ocr_engine)
         else:
             img = decode_upload_file(content)
-            if preprocess:
+            if preprocess and ocr_engine not in ["docling"]:
                 img = preprocess_for_ocr(img)
-            result = app.state.ocr_service.process(img)
+            if ocr_engine == "docling":
+                result = ocr_service.process(content)
+            else:
+                result = ocr_service.process(img)
 
         if not result["success"]:
             raise HTTPException(
@@ -726,6 +986,8 @@ async def extract_text(
             items=bbox_items,
             processing_time_ms=processing_time,
             usage=UsageInfo.from_text(result["text"]),
+            ocr_engine=app.state.ocr_factory.current_engine or ocr_engine,
+            engine_loaded=engine_was_loaded,
         )
 
     except HTTPException:
@@ -741,27 +1003,38 @@ async def extract_with_bbox(
     document: UploadFile = File(..., description="Document file (image or PDF)"),
     language: str = Form("en"),
     preprocess: bool = Form(True),
+    ocr_engine: str = Form(
+        "auto", description="OCR engine: docling, easyocr, textract, tesseract, auto"
+    ),
     x_api_key: Optional[str] = Header(None, description="API key for authentication"),
 ) -> ExtractResponse:
     """Extract text with bounding box coordinates."""
     start_time = time.time()
     verify_api_key(x_api_key)
 
-    if not app.state.ocr_service.available:
-        raise HTTPException(status_code=503, detail="OCR not available")
-
     try:
         content = await document.read()
         await document.seek(0)
 
+        engine_was_loaded = app.state.ocr_factory.current_engine != ocr_engine
+        ocr_service = app.state.ocr_factory.get_service(ocr_engine)
+
+        if not ocr_service.available:
+            raise HTTPException(
+                status_code=503, detail=f"OCR engine '{ocr_engine}' not available"
+            )
+
         if is_pdf_file(content):
             images = decode_pdf_pages(content)
-            result = process_document_pages(images, preprocess)
+            result = process_document_pages(images, preprocess, ocr_engine)
         else:
             img = decode_upload_file(content)
-            if preprocess:
+            if preprocess and ocr_engine not in ["docling"]:
                 img = preprocess_for_ocr(img)
-            result = app.state.ocr_service.process(img)
+            if ocr_engine == "docling":
+                result = ocr_service.process(content)
+            else:
+                result = ocr_service.process(img)
 
         if not result["success"]:
             raise HTTPException(
@@ -783,6 +1056,8 @@ async def extract_with_bbox(
             items=bbox_items,
             processing_time_ms=processing_time,
             usage=UsageInfo.from_text(result["text"]),
+            ocr_engine=app.state.ocr_factory.current_engine or ocr_engine,
+            engine_loaded=engine_was_loaded,
         )
 
     except HTTPException:
@@ -791,6 +1066,64 @@ async def extract_with_bbox(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
+
+
+class AdminOCRUnloadResponse(BaseModel):
+    """Response for OCR unload endpoint."""
+
+    success: bool
+    unloaded_engine: Optional[str] = None
+    message: str
+
+
+class AdminOCRStatusResponse(BaseModel):
+    """Response for OCR status endpoint."""
+
+    current_engine: Optional[str] = None
+    idle_seconds: Optional[float] = None
+    engines_used: List[str] = []
+
+
+@app.post("/admin/ocr/unload", response_model=AdminOCRUnloadResponse, tags=["Admin"])
+async def unload_ocr_engine(
+    x_admin_api_key: Optional[str] = Header(
+        None, description="Admin API key for authentication"
+    ),
+) -> AdminOCRUnloadResponse:
+    """Explicitly unload the current OCR engine to free memory."""
+    config = app.state.config
+    if config.admin_api_key is None:
+        raise HTTPException(status_code=501, detail="Admin API key not configured")
+    if x_admin_api_key != config.admin_api_key:
+        raise HTTPException(status_code=403, detail="Invalid admin API key")
+
+    result = app.state.ocr_factory.unload_current()
+    return AdminOCRUnloadResponse(
+        success=result["success"],
+        unloaded_engine=result["unloaded_engine"],
+        message=result["message"],
+    )
+
+
+@app.get("/admin/ocr/status", response_model=AdminOCRStatusResponse, tags=["Admin"])
+async def get_ocr_status(
+    x_admin_api_key: Optional[str] = Header(
+        None, description="Admin API key for authentication"
+    ),
+) -> AdminOCRStatusResponse:
+    """Get current OCR engine status."""
+    config = app.state.config
+    if config.admin_api_key is None:
+        raise HTTPException(status_code=501, detail="Admin API key not configured")
+    if x_admin_api_key != config.admin_api_key:
+        raise HTTPException(status_code=403, detail="Invalid admin API key")
+
+    status = app.state.ocr_factory.get_status()
+    return AdminOCRStatusResponse(
+        current_engine=status["current_engine"],
+        idle_seconds=status["idle_seconds"],
+        engines_used=status["engines_used"],
+    )
 
 
 class HarvestRequest(BaseModel):
@@ -804,6 +1137,7 @@ class HarvestRequest(BaseModel):
         "Answer questions about this document based ONLY on the text extracted."
     )
     temperature: float = 0.0
+    ocr_engine: str = "auto"
 
 
 @app.post("/harvest", response_model=HarvestResponse, tags=["Extraction"])
@@ -815,8 +1149,11 @@ async def harvest_document(
     start_time = time.time()
     verify_api_key(x_api_key)
 
-    if not app.state.ocr_service.available:
-        raise HTTPException(status_code=503, detail="OCR not available")
+    ocr_service = app.state.ocr_factory.get_service(request.ocr_engine)
+    if not ocr_service.available:
+        raise HTTPException(
+            status_code=503, detail=f"OCR engine '{request.ocr_engine}' not available"
+        )
 
     if not app.state.bedrock_client.is_available():
         raise HTTPException(
@@ -832,7 +1169,7 @@ async def harvest_document(
             except Exception:
                 raise HTTPException(status_code=400, detail="Invalid base64 document")
         elif request.s3_bucket and request.s3_key:
-            config = ApiConfig.from_env()
+            config = app.state.config
             allowed_buckets = (
                 config.allowed_s3_buckets.split(",")
                 if config.allowed_s3_buckets
@@ -871,9 +1208,13 @@ async def harvest_document(
             raise HTTPException(status_code=400, detail="No document content received")
 
         try:
-            img = decode_upload_file(image_bytes)
-            img = preprocess_for_ocr(img)
-            ocr_result = app.state.ocr_service.process(img)
+            if request.ocr_engine == "docling":
+                ocr_result = ocr_service.process(image_bytes)
+            else:
+                img = decode_upload_file(image_bytes)
+                if request.ocr_engine not in ["docling"]:
+                    img = preprocess_for_ocr(img)
+                ocr_result = ocr_service.process(img)
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"OCR extraction failed: {str(e)}"
