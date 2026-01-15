@@ -25,6 +25,10 @@ services:
       - SHOESHINE_OLLAMA_URL=http://ollama:11434
       - SHOESHINE_LLM_MODEL=llama3
 
+      # OCR Configuration
+      - SHOESHINE_DEFAULT_OCR_ENGINE=easyocr
+      - SHOESHINE_OCR_IDLE_TIMEOUT=600
+
       # Disable PaddleOCR model check warning
       - PADDLEX_DISABLE_MODEL_SOURCE_CHECK=True
 
@@ -44,6 +48,14 @@ services:
       - shoeshine-network
     depends_on:
       - ollama
+    # GPU support (uncomment for NVIDIA GPU)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
   ollama:
     image: ollama/ollama:latest
@@ -57,12 +69,37 @@ services:
       - shoeshine-network
     environment:
       - OLLAMA_KEEP_ALIVE=24h
+      - OLLAMA_GPU_LAYERS=35  # Use GPU if available
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:11434/api/version"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
+    # GPU support for Ollama (uncomment for NVIDIA GPU)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # Optional: Web UI for Ollama
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: shoeshine-webui
+    ports:
+      - "8080:8080"
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+    volumes:
+      - webui-data:/app/backend/data
+    restart: unless-stopped
+    networks:
+      - shoeshine-network
+    depends_on:
+      - ollama
 
 networks:
   shoeshine-network:
@@ -70,3 +107,4 @@ networks:
 
 volumes:
   ollama-data:
+  webui-data:
