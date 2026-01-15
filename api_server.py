@@ -430,7 +430,7 @@ class TextractOCRService:
             config = ApiConfig.from_env()
             self.client = boto3.client(
                 "textract",
-                region_name=config.aws_region or "us-east-1",
+                region_name=config.aws_region or "eu-west-2",
                 aws_access_key_id=config.aws_access_key_id,
                 aws_secret_access_key=config.aws_secret_access_key,
             )

@@ -35,7 +35,7 @@ class OCROptions(BaseModel):
 class BedrockOptions(BaseModel):
     """AWS Bedrock configuration options."""
 
-    region: str = "us-east-1"
+    region: str = "eu-west-2"
     model_id: str = ""
     max_tokens: int = 4096
     temperature: float = 0.0

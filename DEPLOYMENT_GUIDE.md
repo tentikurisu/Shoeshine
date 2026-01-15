@@ -1,17 +1,18 @@
 # Shoeshine Deployment Guide
+# Region: eu-west-2 (London)
 
 ## Deployment Modes
 
 ### Mode 1: Lambda (Default - Lightweight)
 **Use when:** You want simple, cost-effective deployment
 - **OCR Engines:** Textract + EasyOCR only
-- **Cost:** ~$26.50/month for 10K requests
+- **Cost:** ~$29.00/month for 10K requests (eu-west-2)
 - **Setup:** Minimal, no infrastructure management
 
 ### Mode 2: ECS (Full OCR - All Engines)
 **Use when:** You need Docling or Tesseract
 - **OCR Engines:** Textract + EasyOCR + Docling + Tesseract
-- **Cost:** ~$35.00/month (24/7)
+- **Cost:** ~$46.00/month (24/7, eu-west-2)
 - **Setup:** Requires ECS cluster, load balancer
 
 ---
@@ -49,13 +50,13 @@ export SHOESHINE_DEFAULT_OCR_ENGINE=docling
 docker build -f Dockerfile.lambda -t shoeshine-lambda:latest .
 
 # Push to ECR
-docker tag shoeshine-lambda:latest ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/shoeshine:latest
-docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/shoeshine:latest
+docker tag shoeshine-lambda:latest ${AWS_ACCOUNT_ID}.dkr.ecr.eu-west-2.amazonaws.com/shoeshine:latest
+docker push ${AWS_ACCOUNT_ID}.dkr.ecr.eu-west-2.amazonaws.com/shoeshine:latest
 
 # Update Lambda (Bamboo task)
 aws lambda update-function-code \
   --function-name shoeshine \
-  --image-uri ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/shoeshine:latest
+  --image-uri ${AWS_ACCOUNT_ID}.dkr.ecr.eu-west-2.amazonaws.com/shoeshine:latest
 ```
 
 **Environment Variables:**
@@ -64,7 +65,7 @@ SHOESHINE_DEPLOY_MODE=lambda
 SHOESHINE_DEFAULT_OCR_ENGINE=auto          # auto: textract → easyocr
 SHOESHINE_API_KEY=your-api-key
 BEDROCK_MODEL_ID=anthropic.claude-sonnet-4-20250507
-AWS_REGION=us-east-1
+AWS_REGION=eu-west-2
 ```
 
 ---
@@ -89,8 +90,8 @@ AWS_REGION=us-east-1
 docker build -f Dockerfile.ecs -t shoeshine-ecs:latest .
 
 # Push to ECR
-docker tag shoeshine-ecs:latest ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/shoeshine-ecs:latest
-docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/shoeshine-ecs:latest
+docker tag shoeshine-ecs:latest ${AWS_ACCOUNT_ID}.dkr.ecr.eu-west-2.amazonaws.com/shoeshine-ecs:latest
+docker push ${AWS_ACCOUNT_ID}.dkr.ecr.eu-west-2.amazonaws.com/shoeshine-ecs:latest
 
 # Update ECS service (Bamboo task)
 aws ecs update-service \
@@ -105,7 +106,7 @@ SHOESHINE_DEPLOY_MODE=ecs
 SHOESHINE_DEFAULT_OCR_ENGINE=docling       # or: auto, easyocr, textract, tesseract
 SHOESHINE_API_KEY=your-api-key
 BEDROCK_MODEL_ID=anthropic.claude-sonnet-4-20250507
-AWS_REGION=us-east-1
+AWS_REGION=eu-west-2
 ```
 
 ---
@@ -185,25 +186,26 @@ curl -X GET http://api/admin/ocr/status
 
 ---
 
-## Cost Comparison
+## Cost Comparison (eu-west-2)
 
 ### Lambda (per month, estimated 10K requests)
 | Component | Cost |
 |-----------|------|
 | Lambda invocations | ~$1.00 |
-| Lambda duration (3s avg) | ~$9.00 |
+| Lambda duration (3s avg) | ~$10.00 |
 | Textract (text detection) | ~$1.50 |
 | Bedrock (Q&A) | ~$15.00 |
-| **Total** | **~$26.50/month** |
+| **Total** | **~$27.50/month** |
 
 ### ECS Fargate (per month, 24/7)
 | Component | Cost |
 |-----------|------|
-| ECS Fargate (1GB, 0.5 vCPU) | ~$20.00 |
+| ECS Fargate (1GB, 0.5 vCPU) | ~$22.00 |
+| ALB (load balancer) | ~$24.00 |
 | Bedrock (Q&A) | ~$15.00 |
-| **Total** | **~$35.00/month** |
+| **Total** | **~$61.00/month** |
 
-*Note: Add Textract costs if using it in ECS. ECS costs vary by region and usage.*
+*Note: Costs are estimates for eu-west-2 (London). Actual costs may vary based on usage.*
 
 ---
 

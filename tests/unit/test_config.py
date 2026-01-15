@@ -24,7 +24,7 @@ class TestSettings:
         assert settings.version == "1.0.0"
         assert settings.server.port == 8000
         assert settings.ocr.language == "en"
-        assert settings.bedrock.region == "us-east-1"
+        assert settings.bedrock.region == "eu-west-2"
 
     def test_environment_from_env(self):
         """Test environment loading from environment variable."""
@@ -83,7 +83,7 @@ class TestBedrockOptions:
     def test_default_bedrock_options(self):
         """Test default Bedrock options."""
         options = BedrockOptions()
-        assert options.region == "us-east-1"
+        assert options.region == "eu-west-2"
         assert options.model_id == "anthropic.claude-sonnet-4-20250507"
         assert options.max_tokens == 4096
         assert options.temperature == 0.0

@@ -74,7 +74,7 @@ cp terraform.tfvars.example terraform.tfvars
 
 2. Edit `terraform.tfvars`:
 ```hcl
-aws_region   = "us-east-1"
+aws_region   = "eu-west-2"
 environment  = "production"
 api_key      = "your-generated-api-key"
 bedrock_model_id = "anthropic.claude-sonnet-4-20250507"
@@ -88,9 +88,9 @@ allowed_s3_buckets = "corp-docs,bucket-name"
 docker build -f Dockerfile.lambda -t shoeshine-lambda:latest .
 
 # Push to ECR
-aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <account-id>.dkr.ecr.us-east-1.amazonaws.com
-docker tag shoeshine-lambda:latest <account-id>.dkr.ecr.us-east-1.amazonaws.com/shoeshine:latest
-docker push <account-id>.dkr.ecr.us-east-1.amazonaws.com/shoeshine:latest
+aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin <account-id>.dkr.ecr.eu-west-2.amazonaws.com
+docker tag shoeshine-lambda:latest <account-id>.dkr.ecr.eu-west-2.amazonaws.com/shoeshine:latest
+docker push <account-id>.dkr.ecr.eu-west-2.amazonaws.com/shoeshine:latest
 
 # Deploy infrastructure
 cd terraform
@@ -142,7 +142,7 @@ All endpoints accept `X-API-Key` header. Configure via `SHOESHINE_API_KEY` envir
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `SHOESHINE_API_KEY` | Yes | - | API key for authentication |
-| `AWS_REGION` | No | `us-east-1` | AWS region |
+| `AWS_REGION` | No | `eu-west-2` | AWS region |
 | `BEDROCK_MODEL_ID` | Yes | - | Bedrock model ID (e.g., anthropic.claude-sonnet-4-20250507) |
 | `ALLOWED_S3_BUCKETS` | No | `` | Comma-separated S3 buckets |
 
