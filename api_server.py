@@ -16,13 +16,16 @@ Environment Variables:
     SHOESHINE_API_KEY           - API key for authentication (optional)
     SHOESHINE_HOST              - Host to bind (default: 0.0.0.0)
     SHOESHINE_PORT              - Port to listen (default: 8000)
-    SHOESHINE_OLLAMA_URL        - Ollama URL for harvest endpoint (optional)
-    SHOESHINE_LLM_MODEL         - LLM model name for harvest (optional)
-    AWS_REGION                  - AWS region for Bedrock (optional)
-    AWS_ACCESS_KEY_ID           - AWS credentials (optional)
-    AWS_SECRET_ACCESS_KEY       - AWS credentials (optional)
-    BEDROCK_MODEL_ID            - Bedrock model ID (optional)
-    SHOESHINE_OCR_ENGINE        - OCR engine: easyocr (default), pytesseract
+    SHOESHINE_OLLAMA_URL        - Ollama URL (default: http://localhost:11434)
+    SHOESHINE_LLM_MODEL         - LLM model name (default: llama3)
+    SHOESHINE_DEFAULT_OCR_ENGINE - OCR engine: easyocr (default), docling, tesseract
+    SHOESHINE_OCR_IDLE_TIMEOUT  - Idle timeout in seconds (default: 600)
+    SHOESHINE_ADMIN_API_KEY     - Admin API key for management endpoints
+
+OCR Engines (Local):
+    - EasyOCR: Default, pure Python (~300MB models on first run)
+    - Tesseract: Requires system installation
+    - Docling: Full document parsing, best for PDFs
 """
 
 import os
@@ -147,11 +150,9 @@ class ApiConfig:
     port: int
     ollama_url: Optional[str]
     llm_model: Optional[str]
-    aws_region: Optional[str]
-    aws_access_key_id: Optional[str]
-    aws_secret_access_key: Optional[str]
-    bedrock_model_id: Optional[str]
-    ocr_engine: str
+    default_ocr_engine: str
+    ocr_idle_timeout_seconds: int
+    admin_api_key: Optional[str]
 
     @classmethod
     def from_env(cls) -> ApiConfig:
@@ -161,13 +162,11 @@ class ApiConfig:
             port=int(os.getenv("SHOESHINE_PORT", "8000")),
             ollama_url=os.getenv("SHOESHINE_OLLAMA_URL"),
             llm_model=os.getenv("SHOESHINE_LLM_MODEL", "llama3"),
-            aws_region=os.getenv("AWS_REGION"),
-            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-            bedrock_model_id=os.getenv(
-                "BEDROCK_MODEL_ID", "anthropic.claude-sonnet-4-20250507"
+            default_ocr_engine=os.getenv("SHOESHINE_DEFAULT_OCR_ENGINE", "easyocr"),
+            ocr_idle_timeout_seconds=int(
+                os.getenv("SHOESHINE_OCR_IDLE_TIMEOUT", "600")
             ),
-            ocr_engine=os.getenv("SHOESHINE_OCR_ENGINE", "easyocr"),
+            admin_api_key=os.getenv("SHOESHINE_ADMIN_API_KEY"),
         )
 
 
@@ -394,75 +393,100 @@ If a field is not found, include it with value "NOT_FOUND"."""
         return []
 
 
-class BedrockService:
-    """Service for AWS Bedrock integration."""
+# ============================================================================
+# LLM Platform Detection (Ollama, vLLM, LM Studio, etc.)
+# ============================================================================
 
-    def __init__(self):
-        self.config = ApiConfig.from_env()
-        self.client = None
-        if self.config.aws_region and self.config.aws_access_key_id:
-            import boto3
 
-            self.client = boto3.client(
-                "bedrock-runtime",
-                region_name=self.config.aws_region,
-                aws_access_key_id=self.config.aws_access_key_id,
-                aws_secret_access_key=self.config.aws_secret_access_key,
-            )
+class LLMPlatform:
+    """Represents a detected LLM platform."""
 
-    def is_available(self) -> bool:
-        """Check if Bedrock is available."""
-        return self.client is not None
+    def __init__(self, name: str, url: str, models: List[str]):
+        self.name = name
+        self.url = url
+        self.models = models
 
-    def extract_structured(
-        self, text: str, fields: List[str], system_prompt: str = None
-    ) -> List[Dict]:
-        """Extract structured data from text using Bedrock."""
-        if not self.is_available():
-            return []
+    def __repr__(self):
+        return f"LLMPlatform({self.name}, {len(self.models)} models)"
 
-        model_id = self.config.bedrock_model_id or "anthropic.claude-sonnet-4-20250507"
 
-        default_system = """You are extracting structured data from a document.
-Extract requested fields as JSON array of objects.
-Output format: [{"key": "field_name", "value": "extracted value", "where": "location"}]
+def detect_llm_platforms() -> List[LLMPlatform]:
+    """
+    Detect available LLM platforms on the system.
 
-If a field is not found, include it with value "NOT_FOUND"."""
+    Checks for:
+    - Ollama (ports 11434, 127.0.0.1:11434)
+    - vLLM (ports 8000, 127.0.0.1:8000)
+    - LM Studio (ports 1234, 127.0.0.1:1234)
+    """
+    platforms = []
+    httpx = __import__("httpx")
 
+    # Ollama detection
+    ollama_urls = [
+        os.getenv("SHOESHINE_OLLAMA_URL", "http://localhost:11434"),
+        "http://localhost:11434",
+        "http://127.0.0.1:11434",
+    ]
+
+    for url in ollama_urls:
         try:
-            response = self.client.converse(
-                modelId=model_id,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "text": f"Extract these fields: {', '.join(fields)}\n\nDocument:\n{text}"
-                            }
-                        ],
-                    }
-                ],
-                system=[{"text": system_prompt or default_system}],
-                inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
-            )
+            with httpx.Client(timeout=5) as client:
+                response = client.get(f"{url}/api/tags")
+                if response.status_code == 200:
+                    models = [m["name"] for m in response.json().get("models", [])]
+                    if models:
+                        platforms.append(LLMPlatform("ollama", url, models))
+                        print(f"  Ollama detected: {len(models)} models at {url}")
+                        break
+        except Exception:
+            continue
 
-            content = response["output"]["message"]["content"][0]["text"]
+    # vLLM detection
+    try:
+        with httpx.Client(timeout=5) as client:
+            response = client.get("http://localhost:8000/v1/models")
+            if response.status_code == 200:
+                data = response.json()
+                models = [m["id"] for m in data.get("data", [])]
+                if models:
+                    platforms.append(
+                        LLMPlatform("vllm", "http://localhost:8000", models)
+                    )
+                    print(
+                        f"  vLLM detected: {len(models)} models at http://localhost:8000"
+                    )
+    except Exception:
+        pass
 
-            try:
-                import json
+    # LM Studio detection
+    try:
+        with httpx.Client(timeout=5) as client:
+            response = client.get("http://localhost:1234/v1/models")
+            if response.status_code == 200:
+                data = response.json()
+                models = [m["id"] for m in data.get("data", [])]
+                if models:
+                    platforms.append(
+                        LLMPlatform("lmstudio", "http://localhost:1234", models)
+                    )
+                    print(
+                        f"  LM Studio detected: {len(models)} models at http://localhost:1234"
+                    )
+    except Exception:
+        pass
 
-                data = json.loads(content)
-                if isinstance(data, list):
-                    return data
-                if isinstance(data, dict) and "items" in data:
-                    return data["items"]
-            except:
-                pass
+    return platforms
 
-        except Exception as e:
-            print(f"Bedrock extraction failed: {e}")
 
-        return []
+def get_default_llm_for_platform(platform_name: str) -> str:
+    """Get the default model for a given platform."""
+    defaults = {
+        "ollama": "llama3",
+        "vllm": "meta-llama/Llama-3.1-8B-Instruct",
+        "lmstudio": "llama3.2",
+    }
+    return defaults.get(platform_name, "llama3")
 
 
 # ============================================================================
@@ -558,11 +582,13 @@ async def lifespan(app: FastAPI):
     print(f"\nConfiguration:")
     print(f"  Host: {config.host}:{config.port}")
     print(f"  API Key: {'Configured' if config.api_key else 'Not configured'}")
-    print(f"  OCR Engine: {config.ocr_engine} (with fallback)")
-    print(f"  Ollama: {config.ollama_url or 'Not configured'}")
-    print(f"  Bedrock: {'Configured' if config.aws_region else 'Not configured'}")
+    print(f"  Default OCR Engine: {config.default_ocr_engine}")
+    print(f"  OCR Idle Timeout: {config.ocr_idle_timeout_seconds}s")
+    print(
+        f"  Admin API Key: {'Configured' if config.admin_api_key else 'Not configured'}"
+    )
 
-    app.state.ocr_service = OCRService(engine=config.ocr_engine)
+    app.state.ocr_service = OCRService(engine=config.default_ocr_engine)
     ocr_status = "Available" if app.state.ocr_service.available else "Failed"
     print(f"  OCR: {ocr_status}")
 
@@ -576,11 +602,13 @@ async def lifespan(app: FastAPI):
         )
         print(f"  Ollama: {ollama_status}")
 
-    app.state.bedrock_service = BedrockService()
-    bedrock_status = (
-        "Available" if app.state.bedrock_service.is_available() else "Not configured"
-    )
-    print(f"  Bedrock: {bedrock_status}")
+    app.state.llm_platforms = detect_llm_platforms()
+    if app.state.llm_platforms:
+        print(f"  LLM Platforms: {len(app.state.llm_platforms)} detected")
+        for platform in app.state.llm_platforms:
+            print(f"    - {platform.name}: {len(platform.models)} models")
+    else:
+        print("  LLM Platforms: None detected (set SHOESHINE_OLLAMA_URL)")
 
     if not app.state.ocr_service.available:
         print("\n  WARNING: OCR not available!")
@@ -593,6 +621,7 @@ async def lifespan(app: FastAPI):
     print("  POST /harvest        - Structured extraction (requires LLM)")
     print("  GET  /health         - Health check")
     print("  GET  /models         - List available models")
+    print("  GET  /admin/platforms - List detected LLM platforms")
     print("=" * 60)
 
     yield
@@ -652,7 +681,7 @@ async def health_check() -> HealthResponse:
     ollama_available = (
         app.state.ollama_service.is_available() if app.state.ollama_service else False
     )
-    bedrock_available = app.state.bedrock_service.is_available()
+    llm_platforms_count = len(getattr(app.state, "llm_platforms", []))
 
     all_healthy = ocr_available
 
@@ -663,9 +692,9 @@ async def health_check() -> HealthResponse:
         services={
             "ocr": ocr_available,
             "ollama": ollama_available,
-            "bedrock": bedrock_available,
+            "llm_platforms": llm_platforms_count > 0,
         },
-        ocr_engine=config.ocr_engine,
+        ocr_engine=config.default_ocr_engine,
     )
 
 
@@ -804,10 +833,14 @@ async def harvest_document(
     if not app.state.ocr_service.available:
         raise HTTPException(status_code=503, detail="OCR not available")
 
-    if not config.ollama_url and not config.aws_region:
+    llm_available = (
+        app.state.ollama_service.is_available() if app.state.ollama_service else False
+    ) or len(getattr(app.state, "llm_platforms", [])) > 0
+
+    if not llm_available:
         raise HTTPException(
             status_code=503,
-            detail="No LLM configured. Set SHOESHINE_OLLAMA_URL or AWS credentials.",
+            detail="No LLM configured. Set SHOESHINE_OLLAMA_URL or ensure Ollama/vLLM/LM Studio is running.",
         )
 
     try:
@@ -829,10 +862,6 @@ async def harvest_document(
         items = []
         if app.state.ollama_service and app.state.ollama_service.is_available():
             items = app.state.ollama_service.extract_structured(
-                ocr_result["text"], field_list, system_prompt
-            )
-        elif app.state.bedrock_service.is_available():
-            items = app.state.bedrock_service.extract_structured(
                 ocr_result["text"], field_list, system_prompt
             )
 
