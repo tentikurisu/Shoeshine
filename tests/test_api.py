@@ -1,5 +1,5 @@
 """
-Tests for Shoeshine API Server.
+Tests for Shoeshine API Server (Local-Only version).
 """
 
 import pytest
@@ -15,14 +15,12 @@ from PIL import Image, ImageDraw
 @pytest.fixture
 def client():
     """Create a test client with initialized services."""
-    from api_server import app, OCRService, BedrockService
-    from shoeshine_lib import OllamaService
+    from api_server import app, OCRService, OllamaService
 
     client = TestClient(app)
 
     app.state.ocr_service = OCRService(engine="easyocr")
-    app.state.ollama_service = OllamaService("http://localhost:11434")
-    app.state.bedrock_service = BedrockService()
+    app.state.ollama_service = None  # May not be running in tests
 
     return client
 
