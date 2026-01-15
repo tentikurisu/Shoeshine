@@ -30,15 +30,16 @@ import time
 import uuid
 import base64
 import io
+import json
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
 import cv2
 import numpy as np
 import requests
 import fitz
+import boto3
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Optional, List, Dict, Any
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
@@ -409,8 +410,6 @@ class TextractOCRService:
 
     def __init__(self):
         try:
-            import boto3
-
             config = ApiConfig.from_env()
             self.client = boto3.client(
                 "textract",
@@ -601,8 +600,6 @@ class BedrockService:
         self.config = ApiConfig.from_env()
         self.client = None
         if self.config.aws_region and self.config.aws_access_key_id:
-            import boto3
-
             self.client = boto3.client(
                 "bedrock-runtime",
                 region_name=self.config.aws_region,
@@ -615,13 +612,15 @@ class BedrockService:
         return self.client is not None
 
     def extract_structured(
-        self, text: str, fields: List[str], system_prompt: str = None
+        self, text: str, fields: List[str], system_prompt: Optional[str] = None
     ) -> List[Dict]:
         """Extract structured data from text using Bedrock."""
         if not self.is_available():
             return []
 
         model_id = self.config.bedrock_model_id
+        if not model_id:
+            return []
 
         default_system = """You are extracting structured data from a document.
 Extract requested fields as JSON array of objects.
@@ -630,8 +629,13 @@ Output format: [{"key": "field_name", "value": "extracted value", "where": "loca
 If a field is not found, include it with value "NOT_FOUND"."""
 
         try:
+            model_id_str: str = (
+                model_id if isinstance(model_id, str) and model_id else ""
+            )
+            if not model_id_str:
+                return []
             response = self.client.converse(
-                modelId=model_id,
+                modelId=model_id_str,
                 messages=[
                     {
                         "role": "user",
@@ -649,14 +653,12 @@ If a field is not found, include it with value "NOT_FOUND"."""
             content = response["output"]["message"]["content"][0]["text"]
 
             try:
-                import json
-
                 data = json.loads(content)
                 if isinstance(data, list):
                     return data
                 if isinstance(data, dict) and "items" in data:
                     return data["items"]
-            except:
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
                 pass
 
         except Exception as e:
@@ -1100,6 +1102,7 @@ class AdminOCRStatusResponse(BaseModel):
     engines_used: List[str] = []
     is_lambda: bool = False
     available_engines: List[str] = []
+    note: Optional[str] = None
 
 
 @app.post("/admin/ocr/unload", response_model=AdminOCRUnloadResponse, tags=["Admin"])
@@ -1201,8 +1204,6 @@ async def harvest_document(
                     detail=f"S3 bucket '{request.s3_bucket}' not in allowed list",
                 )
             try:
-                import boto3
-
                 s3_client = boto3.client("s3")
                 response = s3_client.get_object(
                     Bucket=request.s3_bucket, Key=request.s3_key
