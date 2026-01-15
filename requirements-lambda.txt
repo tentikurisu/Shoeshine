@@ -1,0 +1,27 @@
+# Shoeshine Requirements for AWS Lambda Deployment
+# Excludes docling (too large for Lambda's 250MB layer limit)
+# Lambda-supported engines: textract, easyocr
+
+pymupdf>=1.24.0
+opencv-python>=4.10.0.0
+numpy>=2.0.0
+pillow>=10.0.0
+paddleocr>=2.7.0
+pydantic>=2.8.0
+PyYAML>=6.0.0
+requests>=2.32.0
+tqdm>=4.66.0
+easyocr>=1.7.0
+pytesseract>=0.3.10
+
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+
+boto3>=1.34.0
+botocore>=1.34.0
+mangum>=0.17.0
+
+pytest>=7.4.0
+pytest-asyncio>=0.23.0
+httpx>=0.26.0

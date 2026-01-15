@@ -486,17 +486,29 @@ class OCRServiceFactory:
         self.current_engine: Optional[str] = None
         self.current_service: Optional[Any] = None
         self.last_request_time: Dict[str, float] = {}
-        self._idle_check_task = None
+        self._is_lambda = os.environ.get("AWS_LAMBDA_FUNCTION_NAME") is not None
+
+    def _get_available_engines(self) -> List[str]:
+        """Get list of available engines for current environment."""
+        if self._is_lambda:
+            return ["textract", "easyocr"]
+        return ["docling", "easyocr", "textract", "tesseract"]
 
     def _create_service(self, engine: str) -> Any:
         """Create a new OCR service instance."""
         if engine == "docling":
+            if self._is_lambda:
+                raise ValueError("Docling not available in Lambda (size constraints)")
             return DoclingOCRService()
         elif engine == "easyocr":
             return EasyOCRService()
         elif engine == "textract":
             return TextractOCRService()
         elif engine == "tesseract":
+            if self._is_lambda:
+                raise ValueError(
+                    "Tesseract not available in Lambda (requires system binaries)"
+                )
             return TesseractOCRService()
         else:
             raise ValueError(f"Unknown OCR engine: {engine}")
@@ -520,13 +532,14 @@ class OCRServiceFactory:
     def get_service(self, engine: str) -> Any:
         """Get OCR service, loading engine if necessary."""
         if engine == "auto":
-            engine_order = ["docling", "easyocr", "textract", "tesseract"]
+            engine_order = self._get_available_engines()
             for e in engine_order:
                 try:
                     service = self.get_service(e)
                     if service.available:
                         return service
-                except:
+                except Exception as ex:
+                    print(f"Engine {e} not available: {ex}")
                     continue
             raise RuntimeError("No OCR engine available")
 
@@ -559,10 +572,13 @@ class OCRServiceFactory:
             "current_engine": self.current_engine,
             "idle_seconds": idle_seconds,
             "engines_used": list(self.last_request_time.keys()),
+            "is_lambda": self._is_lambda,
         }
 
     def check_idle_timeout(self, timeout_seconds: int) -> bool:
         """Check if current engine should be unloaded due to inactivity."""
+        if self._is_lambda:
+            return False
         if not self.current_engine:
             return False
 
@@ -1082,6 +1098,8 @@ class AdminOCRStatusResponse(BaseModel):
     current_engine: Optional[str] = None
     idle_seconds: Optional[float] = None
     engines_used: List[str] = []
+    is_lambda: bool = False
+    available_engines: List[str] = []
 
 
 @app.post("/admin/ocr/unload", response_model=AdminOCRUnloadResponse, tags=["Admin"])
@@ -1123,6 +1141,8 @@ async def get_ocr_status(
         current_engine=status["current_engine"],
         idle_seconds=status["idle_seconds"],
         engines_used=status["engines_used"],
+        is_lambda=status.get("is_lambda", False),
+        available_engines=app.state.ocr_factory._get_available_engines(),
     )
 
 

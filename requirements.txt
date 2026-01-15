@@ -27,3 +27,9 @@ mangum>=0.17.0
 pytest>=7.4.0
 pytest-asyncio>=0.23.0
 httpx>=0.26.0
+
+# ============================================================================
+# NOTE: For AWS Lambda deployment, use requirements-lambda.txt instead
+# which excludes docling (too large for Lambda's 250MB layer limit)
+# Lambda-supported engines: textract, easyocr
+# ============================================================================
