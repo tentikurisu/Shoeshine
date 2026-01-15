@@ -32,12 +32,22 @@ main (springboard)
 - [x] Tesseract integration
 - [x] Per-request engine selection via `?ocr_engine=` parameter
 
-### Phase 2: LLM Platform Detection ⏳ (Next)
-- [ ] Ollama auto-detection
-- [ ] vLLM auto-detection
-- [ ] LM Studio auto-detection
-- [ ] Per-request LLM selection
-- [ ] `/admin/platforms` endpoint
+### Phase 2: LLM Platform Detection ✅ (Complete)
+- [x] Ollama auto-detection
+- [x] vLLM auto-detection
+- [x] LM Studio auto-detection
+- [x] `/admin/platforms` endpoint
+- [x] `/admin/status` endpoint
+
+### Phase 2.5: Hardware Detection & Monitoring ✅ (Complete)
+- [x] Automatic hardware detection (CPU, RAM, GPU)
+- [x] Resource monitoring (CPU, memory, GPU usage)
+- [x] LLM framework detection (Ollama, vLLM, LM Studio)
+- [x] Performance recommendations based on hardware
+- [x] `/admin/hardware` endpoint
+- [x] `/admin/resources` endpoint
+- [x] `/admin/diagnostics` endpoint
+- [x] All-in-one CLI tool (`shoesine.py`)
 
 ### Phase 3: Benchmarking (Future)
 - [ ] SynthFactory integration
@@ -69,6 +79,30 @@ pip install -r requirements.txt
 ollama serve
 ollama pull llama3
 python api_server.py
+```
+
+### Using the CLI Tool
+```bash
+# Run system diagnostics
+python shoeshine.py diag
+
+# Check dependencies and services
+python shoeshine.py check
+
+# Start the API server
+python shoeshine.py run
+
+# Start Ollama
+python shoeshine.py start-ollama
+
+# Pull a model
+python shoeshine.py pull llama3
+
+# Run tests
+python shoeshine.py test
+
+# Monitor resources
+python shoeshine.py monitor
 ```
 
 ---
@@ -104,6 +138,18 @@ curl -X POST "http://localhost:8000/harvest" \
   -F "document=@doc.pdf" \
   -F "fields=account_number,total_amount" \
   -F "llm_model=llama3"
+```
+
+### Hardware Detection & Monitoring
+```bash
+# Get hardware information (CPU, RAM, GPU)
+curl http://localhost:8000/admin/hardware
+
+# Get current resource usage (CPU, memory, GPU)
+curl http://localhost:8000/admin/resources
+
+# Run complete system diagnostics
+curl http://localhost:8000/admin/diagnostics
 ```
 
 ---
@@ -232,9 +278,8 @@ docker system prune -a
 ## Next Steps
 
 1. **Test the branch** - Verify all features work
-2. **Add LLM platform detection** - Phase 2
-3. **Implement benchmarking** - Phase 3
-4. **Add committee mode** - Phase 4
+2. **Implement benchmarking** - Phase 3 (SynthFactory)
+3. **Add committee mode** - Phase 4
 
 ---
 

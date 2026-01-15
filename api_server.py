@@ -29,10 +29,8 @@ OCR Engines (Local):
 """
 
 import os
-import sys
 import time
 import uuid
-import base64
 import io
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
@@ -41,7 +39,6 @@ import numpy as np
 import requests
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Optional, List, Dict, Any
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
@@ -336,7 +333,7 @@ class OllamaService:
             return False
 
     def extract_structured(
-        self, text: str, fields: List[str], system_prompt: str = None
+        self, text: str, fields: List[str], system_prompt: Optional[str] = None
     ) -> List[Dict]:
         """Extract structured data from text using Ollama."""
         if not self.is_available():
@@ -578,6 +575,8 @@ async def lifespan(app: FastAPI):
     print("No training, no retention, no embeddings stored.")
     print("=" * 60)
 
+    app.state.start_time = time.time()
+
     config = ApiConfig.from_env()
     print(f"\nConfiguration:")
     print(f"  Host: {config.host}:{config.port}")
@@ -622,6 +621,10 @@ async def lifespan(app: FastAPI):
     print("  GET  /health         - Health check")
     print("  GET  /models         - List available models")
     print("  GET  /admin/platforms - List detected LLM platforms")
+    print("  GET  /admin/status   - Detailed system status")
+    print("  GET  /admin/hardware - Hardware information")
+    print("  GET  /admin/resources - Current resource usage")
+    print("  GET  /admin/diagnostics - Complete system diagnostics")
     print("=" * 60)
 
     yield
@@ -887,6 +890,207 @@ async def harvest_document(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Harvest failed: {str(e)}")
+
+
+# ============================================================================
+# Admin Endpoints
+# ============================================================================
+
+
+class PlatformInfo(BaseModel):
+    """Information about a detected LLM platform."""
+
+    name: str
+    url: str
+    models: List[str]
+    available: bool
+
+
+class StatusResponse(BaseModel):
+    """System status response."""
+
+    status: str
+    timestamp: str
+    version: str = "1.0.0"
+    ocr_engine: str
+    ocr_available: bool
+    llm_platforms: List[PlatformInfo]
+    uptime_seconds: float
+
+
+@app.get("/admin/platforms", response_model=List[PlatformInfo], tags=["Admin"])
+async def list_platforms(
+    x_admin_key: Optional[str] = Header(None, description="Admin API key"),
+) -> List[PlatformInfo]:
+    """List detected LLM platforms."""
+    config = ApiConfig.from_env()
+    if config.admin_api_key and x_admin_key != config.admin_api_key:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=403, detail="Invalid admin API key")
+
+    platforms = getattr(app.state, "llm_platforms", [])
+    return [
+        PlatformInfo(
+            name=p.name,
+            url=p.url,
+            models=p.models,
+            available=True,
+        )
+        for p in platforms
+    ]
+
+
+@app.get("/admin/status", response_model=StatusResponse, tags=["Admin"])
+async def system_status(
+    x_admin_key: Optional[str] = Header(None, description="Admin API key"),
+) -> StatusResponse:
+    """Get detailed system status."""
+    config = ApiConfig.from_env()
+    if config.admin_api_key and x_admin_key != config.admin_api_key:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=403, detail="Invalid admin API key")
+
+    platforms = getattr(app.state, "llm_platforms", [])
+    ocr_available = (
+        app.state.ocr_service.available if hasattr(app.state, "ocr_service") else False
+    )
+
+    uptime = time.time() - getattr(app.state, "start_time", time.time())
+
+    return StatusResponse(
+        status="healthy" if ocr_available else "degraded",
+        timestamp=datetime.utcnow().isoformat() + "Z",
+        ocr_engine=config.default_ocr_engine,
+        ocr_available=ocr_available,
+        llm_platforms=[
+            PlatformInfo(
+                name=p.name,
+                url=p.url,
+                models=p.models,
+                available=True,
+            )
+            for p in platforms
+        ],
+        uptime_seconds=uptime,
+    )
+
+
+class HardwareInfoResponse(BaseModel):
+    """Hardware information response."""
+
+    timestamp: str
+    platform: str
+    python_version: str
+    cpu: Dict[str, Any]
+    memory: Dict[str, Any]
+    gpus: List[Dict[str, Any]]
+
+
+@app.get("/admin/hardware", response_model=HardwareInfoResponse, tags=["Admin"])
+async def get_hardware_info(
+    x_admin_key: Optional[str] = Header(None, description="Admin API key"),
+) -> HardwareInfoResponse:
+    """Get detailed hardware information."""
+    config = ApiConfig.from_env()
+    if config.admin_api_key and x_admin_key != config.admin_api_key:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=403, detail="Invalid admin API key")
+
+    from system_info import get_hardware_info
+
+    hw = get_hardware_info()
+
+    return HardwareInfoResponse(
+        timestamp=hw.timestamp,
+        platform=hw.platform,
+        python_version=hw.python_version,
+        cpu={
+            "cores": hw.cpu.cores,
+            "threads": hw.cpu.threads,
+            "brand": hw.cpu.brand,
+            "frequency_mhz": hw.cpu.frequency_mhz,
+            "usage_percent": hw.cpu.usage_percent,
+        },
+        memory={
+            "total_gb": hw.memory.total_gb,
+            "available_gb": hw.memory.available_gb,
+            "used_percent": hw.memory.used_percent,
+        },
+        gpus=[
+            {
+                "name": g.name,
+                "vram_gb": g.vram_gb,
+                "compute_cap": g.compute_cap,
+                "cuda_available": g.cuda_available,
+                "usage_percent": g.usage_percent,
+            }
+            for g in hw.gpus
+        ],
+    )
+
+
+class ResourceUsageResponse(BaseModel):
+    """Resource usage response."""
+
+    timestamp: str
+    cpu_percent: float
+    memory_percent: float
+    gpu_percent: List[Dict[str, Any]]
+
+
+@app.get("/admin/resources", response_model=ResourceUsageResponse, tags=["Admin"])
+async def get_resource_usage(
+    x_admin_key: Optional[str] = Header(None, description="Admin API key"),
+) -> ResourceUsageResponse:
+    """Get current resource usage."""
+    config = ApiConfig.from_env()
+    if config.admin_api_key and x_admin_key != config.admin_api_key:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=403, detail="Invalid admin API key")
+
+    from system_info import get_resource_usage
+
+    usage = get_resource_usage()
+
+    return ResourceUsageResponse(
+        timestamp=usage["timestamp"],
+        cpu_percent=usage["cpu_percent"],
+        memory_percent=usage["memory_percent"],
+        gpu_percent=usage["gpu_percent"],
+    )
+
+
+class DiagnosticsResponse(BaseModel):
+    """Complete diagnostics response."""
+
+    timestamp: str
+    hardware: Dict[str, Any]
+    frameworks: List[Dict[str, Any]]
+    dependencies: Dict[str, Dict[str, Any]]
+    resource_usage: Dict[str, Any]
+    recommendations: Dict[str, Any]
+
+
+@app.get("/admin/diagnostics", response_model=DiagnosticsResponse, tags=["Admin"])
+async def get_diagnostics(
+    x_admin_key: Optional[str] = Header(None, description="Admin API key"),
+) -> DiagnosticsResponse:
+    """Run complete system diagnostics."""
+    config = ApiConfig.from_env()
+    if config.admin_api_key and x_admin_key != config.admin_api_key:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=403, detail="Invalid admin API key")
+
+    from system_info import run_diagnostics
+
+    diag = run_diagnostics()
+
+    return DiagnosticsResponse(**diag)
 
 
 # ============================================================================
