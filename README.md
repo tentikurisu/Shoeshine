@@ -2,32 +2,40 @@
 
 **Document scanning layer for AWS Bedrock with Lambda deployment.**
 
----
-
-## ⚠️ aws-bedrock-only Branch
-
-This is a **separate development line** from the main Shoeshine repository. It is designed for AWS-only deployment with:
-- EasyOCR running in AWS Lambda
-- AWS Bedrock for LLM (no Ollama)
-- S3 for document retrieval (existing buckets only)
-
-**This branch is NOT intended to be merged back into main.**
+**Model Swapping Framework:** This implementation supports easy OCR and LLM model selection via API requests - no redeployment needed.
 
 ---
 
-## What is Shoeshine?
+## ⚡️ Quick Start
 
-Shoeshoe extracts text from images and PDFs using OCR, then sends the extracted text to AWS Bedrock for Q&A. It is **not an LLM itself** - it is a document-to-text translator.
+### Default Deployment (Lambda - Cost Effective)
+- **Cost:** ~$29/month
+- **OCR Engines:** Textract, EasyOCR
+- **Auto-scales:** Yes
 
-### Key Features
+### Optional: Full OCR (ECS - Additional Cost)
+- **Cost:** ~$46/month (24/7)
+- **OCR Engines:** Textract, EasyOCR, Docling, Tesseract
+- **Enable when:** Need Docling or Tesseract
 
-| Feature | Description |
-|---------|-------------|
-| **EasyOCR in Lambda** | OCR runs inside AWS Lambda container |
-| **Bedrock Integration** | Sends extracted text to AWS Bedrock for Q&A |
-| **S3 Document Retrieval** | Read documents from existing S3 buckets |
-| **API Gateway** | HTTP endpoint via AWS API Gateway |
-| **No Local Services** | 100% AWS-native, no Ollama or local dependencies |
+---
+
+## Deployment Modes
+
+| Mode | Engines | Monthly Cost | When to Use |
+|------|---------|--------------|-------------|
+| **Lambda (Default)** | Textract, EasyOCR | ~$29 | General purpose, cost-sensitive |
+| **ECS (Optional)** | All 4 engines | ~$46 | Complex PDFs, legacy docs |
+
+**Why Lambda is default:**
+- Pay-per-request (no idle costs)
+- Auto-scales to handle traffic
+- Simple infrastructure
+
+**Why ECS is optional:**
+- Runs 24/7 (even when idle)
+- More complex infrastructure
+- Only needed for Docling/Tesseract
 
 ---
 
@@ -98,26 +106,64 @@ terraform init
 terraform apply
 ```
 
-### Testing
+### Testing Docling Locally (Before Enabling ECS)
+
+Docling is NOT included in Lambda deployment due to size constraints. Test it locally first:
 
 ```bash
-# Get API endpoint
-API_ENDPOINT=$(terraform output -raw api_endpoint)
+# Install docling locally
+pip install docling
 
-# Health check
-curl $API_ENDPOINT/health
+# Test with sample document
+python -c "
+from docling.document_converter import DocumentConverter
+converter = DocumentConverter()
+result = converter.convert('your-document.pdf')
+print(result.document.export_to_text())
+```
 
-# Harvest endpoint (extract + Bedrock Q&A)
-curl -X POST $API_ENDPOINT/harvest \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: your-api-key" \
-  -d '{"document": "<base64-image>", "question": "Summarize this"}'
+If Docling meets your needs, enable ECS deployment (additional $46/mo).
 
-# Or with S3 document
-curl -X POST $API_ENDPOINT/harvest \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: your-api-key" \
-  -d '{"s3_bucket": "bucket-name", "s3_key": "doc.pdf", "question": "What is the total?"}'
+---
+
+## Model Swapping Framework
+
+This implementation supports easy **per-request model selection** - no redeployment needed:
+
+### OCR Engine Selection
+```bash
+# Use default (auto: tries textract → easyocr)
+curl -X POST "$API_ENDPOINT/extract/text" -F "document=@doc.pdf"
+
+# Force specific engine
+curl -X POST "$API_ENDPOINT/extract/text?ocr_engine=textract" -F "document=@doc.pdf"
+curl -X POST "$API_ENDPOINT/extract/text?ocr_engine=easyocr" -F "document=@doc.pdf"
+
+# Check available engines
+curl "$API_ENDPOINT/admin/ocr/status"
+```
+
+### Available Engines by Deployment
+
+| Deployment | Engines |
+|------------|---------|
+| Lambda (Default) | textract, easyocr |
+| ECS (Optional) | textract, easyocr, docling, tesseract |
+
+### Benefits
+- **No Redeployment:** Change engines without infrastructure changes
+- **Easy Benchmarking:** Test different engines per request
+- **Fallback Chain:** System tries multiple engines on failure
+- **Cost Control:** Use cheaper engines by default
+
+### Same Pattern for LLM (Future)
+Following this framework for LLM model selection:
+```json
+POST /harvest {
+  "document": "base64...",
+  "question": "Summarize this",
+  "llm_model": "anthropic.claude-sonnet-4-20250507"
+}
 ```
 
 ---
@@ -129,6 +175,8 @@ curl -X POST $API_ENDPOINT/harvest \
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/health` | Health check |
+| GET | `/admin/ocr/status` | OCR engine status |
+| POST | `/admin/ocr/unload` | Unload current engine |
 | POST | `/extract/text` | Extract plain text from document |
 | POST | `/extract/bbox` | Extract text with bounding boxes |
 | POST | `/harvest` | Extract text + Bedrock Q&A |
@@ -144,6 +192,8 @@ All endpoints accept `X-API-Key` header. Configure via `SHOESHINE_API_KEY` envir
 | `SHOESHINE_API_KEY` | Yes | - | API key for authentication |
 | `AWS_REGION` | No | `eu-west-2` | AWS region |
 | `BEDROCK_MODEL_ID` | Yes | - | Bedrock model ID (e.g., anthropic.claude-sonnet-4-20250507) |
+| `SHOESHINE_DEFAULT_OCR_ENGINE` | No | `auto` | Default OCR engine |
+| `SHOESHINE_DEPLOY_MODE` | No | `lambda` | Deployment mode (lambda/ecs) |
 | `ALLOWED_S3_BUCKETS` | No | `` | Comma-separated S3 buckets |
 
 ---
