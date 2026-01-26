@@ -607,6 +607,102 @@ class OCRServiceFactory:
             )
             self._unload_engine()
             return True
+
+
+return False
+
+
+class BedrockModelFactory:
+    """Factory for Bedrock model management with dynamic discovery."""
+
+    def __init__(self, config: "ApiConfig"):
+        self.config = config
+        self.client = None
+        self.available_models: List[Dict] = []
+        self.last_cache_update: float = 0
+        self.models_used: List[str] = []
+
+    def _get_client(self) -> BedrockClient:
+        """Get or create Bedrock client."""
+        if not self.client:
+            from src.llm_clients import BedrockClient
+
+            self.client = BedrockClient(
+                region=self.config.bedrock_region, model_id=self.config.bedrock_model_id
+            )
+        return self.client
+
+    def get_available_models(self, refresh: bool = False) -> List[Dict]:
+        """Get available models with optional cache refresh."""
+        current_time = time.time()
+        cache_age = current_time - self.last_cache_update
+
+        # Check if we need to refresh the cache
+        if (
+            refresh
+            or not self.available_models
+            or cache_age >= self.config.bedrock_model_cache_ttl
+        ):
+            print("Refreshing Bedrock models cache...")
+            client = self._get_client()
+            self.available_models = client.get_available_models(filter_active=True)
+            self.last_cache_update = current_time
+            print(f"Found {len(self.available_models)} available Bedrock models")
+
+        return self.available_models
+
+    def validate_model(self, model_id: str) -> bool:
+        """Validate model ID against available models."""
+        if not model_id:
+            return False
+
+        models = self.get_available_models()
+        return any(m["modelId"] == model_id for m in models)
+
+    def get_model_info(self, model_id: str) -> Optional[Dict]:
+        """Get detailed information about a specific model."""
+        models = self.get_available_models()
+        for model in models:
+            if model["modelId"] == model_id:
+                return model
+        return None
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get current model factory status."""
+        current_time = time.time()
+        cache_age = (
+            current_time - self.last_cache_update if self.last_cache_update else 0
+        )
+
+        return {
+            "available_models_count": len(self.available_models),
+            "cache_age_seconds": int(cache_age),
+            "cache_ttl_seconds": self.config.bedrock_model_cache_ttl,
+            "models_used": self.models_used,
+            "last_cache_update": self.last_cache_update,
+        }
+
+    def refresh_models(self) -> Dict[str, Any]:
+        """Force refresh the models cache."""
+        models_before = len(self.available_models)
+        self.get_available_models(refresh=True)
+        models_after = len(self.available_models)
+
+        return {
+            "success": True,
+            "models_before": models_before,
+            "models_after": models_after,
+            "message": f"Model cache refreshed: {models_before} -> {models_after} models",
+        }
+
+    def set_current_model(self, model_id: str) -> bool:
+        """Set current model and track usage."""
+        if self.validate_model(model_id):
+            client = self._get_client()
+            success = client.set_model(model_id)
+            if success and model_id not in self.models_used:
+                self.models_used.append(model_id)
+            return success
         return False
 
 
@@ -954,12 +1050,23 @@ async def health_check() -> HealthResponse:
 @app.get("/models", response_model=ModelsResponse, tags=["Models"])
 async def list_models() -> ModelsResponse:
     """List available models."""
-    return ModelsResponse(
-        data=[
-            ModelInfo(id="shoeshine-ocr", owned_by="shoeshine"),
-            ModelInfo(id="bedrock", owned_by="aws"),
-        ]
-    )
+    models = [
+        ModelInfo(id="shoeshine-ocr", owned_by="shoeshine"),
+    ]
+
+    # Add available Bedrock models
+    try:
+        bedrock_models = app.state.bedrock_factory.get_available_models()
+        for model in bedrock_models:
+            model_id = model["modelId"]
+            provider = model.get("providerName", "aws").lower()
+            models.append(ModelInfo(id=model_id, owned_by=provider))
+    except Exception as e:
+        print(f"Error fetching Bedrock models for /models endpoint: {e}")
+        # Fallback to generic bedrock entry
+        models.append(ModelInfo(id="bedrock", owned_by="aws"))
+
+    return ModelsResponse(data=models)
 
 
 @app.post("/extract/text", response_model=ExtractResponse, tags=["Extraction"])
@@ -1122,6 +1229,27 @@ class AdminOCRStatusResponse(BaseModel):
     note: Optional[str] = None
 
 
+class AdminBedrockStatusResponse(BaseModel):
+    """Response for Bedrock status endpoint."""
+
+    available_models_count: int = 0
+    cache_age_seconds: int = 0
+    cache_ttl_seconds: int = 0
+    models_used: List[str] = []
+    last_cache_update: float = 0
+    current_model: Optional[str] = None
+    note: Optional[str] = None
+
+
+class AdminBedrockModelsResponse(BaseModel):
+    """Response for Bedrock models refresh endpoint."""
+
+    success: bool = False
+    models_before: int = 0
+    models_after: int = 0
+    message: str = ""
+
+
 @app.post("/admin/ocr/unload", response_model=AdminOCRUnloadResponse, tags=["Admin"])
 async def unload_ocr_engine(
     x_admin_api_key: Optional[str] = Header(
@@ -1166,6 +1294,58 @@ async def get_ocr_status(
     )
 
 
+@app.get(
+    "/admin/bedrock/status", response_model=AdminBedrockStatusResponse, tags=["Admin"]
+)
+async def get_bedrock_status(
+    x_admin_api_key: Optional[str] = Header(
+        None, description="Admin API key for authentication"
+    ),
+) -> AdminBedrockStatusResponse:
+    """Get current Bedrock model factory status."""
+    config = app.state.config
+    if config.admin_api_key is None:
+        raise HTTPException(status_code=501, detail="Admin API key not configured")
+    if x_admin_api_key != config.admin_api_key:
+        raise HTTPException(status_code=403, detail="Invalid admin API key")
+
+    status = app.state.bedrock_factory.get_status()
+    current_model = app.state.bedrock_client.default_model_id
+
+    return AdminBedrockStatusResponse(
+        available_models_count=status["available_models_count"],
+        cache_age_seconds=status["cache_age_seconds"],
+        cache_ttl_seconds=status["cache_ttl_seconds"],
+        models_used=status["models_used"],
+        last_cache_update=status["last_cache_update"],
+        current_model=current_model,
+    )
+
+
+@app.post(
+    "/admin/bedrock/models", response_model=AdminBedrockModelsResponse, tags=["Admin"]
+)
+async def refresh_bedrock_models(
+    x_admin_api_key: Optional[str] = Header(
+        None, description="Admin API key for authentication"
+    ),
+) -> AdminBedrockModelsResponse:
+    """Refresh Bedrock models cache."""
+    config = app.state.config
+    if config.admin_api_key is None:
+        raise HTTPException(status_code=501, detail="Admin API key not configured")
+    if x_admin_api_key != config.admin_api_key:
+        raise HTTPException(status_code=403, detail="Invalid admin API key")
+
+    result = app.state.bedrock_factory.refresh_models()
+    return AdminBedrockModelsResponse(
+        success=result["success"],
+        models_before=result["models_before"],
+        models_after=result["models_after"],
+        message=result["message"],
+    )
+
+
 class HarvestRequest(BaseModel):
     """Harvest endpoint request."""
 
@@ -1178,6 +1358,9 @@ class HarvestRequest(BaseModel):
     )
     temperature: float = 0.0
     ocr_engine: str = "auto"
+    bedrock_model: Optional[str] = Field(
+        None, description="Bedrock model ID for LLM processing"
+    )
 
 
 @app.post("/harvest", response_model=HarvestResponse, tags=["Extraction"])
@@ -1195,11 +1378,19 @@ async def harvest_document(
             status_code=503, detail=f"OCR engine '{request.ocr_engine}' not available"
         )
 
-    if not app.state.bedrock_client.is_available():
+if not app.state.bedrock_client.is_available():
         raise HTTPException(
             status_code=503,
             detail="Bedrock not available. Configure AWS credentials.",
         )
+    
+    # Validate Bedrock model if provided
+    if request.bedrock_model:
+        if not app.state.bedrock_factory.validate_model(request.bedrock_model):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid Bedrock model: {request.bedrock_model}"
+            )
 
     try:
         image_bytes = None
@@ -1261,6 +1452,10 @@ async def harvest_document(
         if not ocr_result["success"]:
             raise HTTPException(
                 status_code=500, detail=f"OCR failed: {ocr_result.get('error')}"
+)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"Document processing failed: {str(e)}"
             )
 
         try:
@@ -1269,6 +1464,7 @@ async def harvest_document(
                 question=request.question,
                 system_prompt=request.prompt,
                 temperature=request.temperature,
+                model_id=request.bedrock_model,
             )
         except Exception as e:
             raise HTTPException(
@@ -1279,7 +1475,7 @@ async def harvest_document(
             success=True,
             extracted_text=ocr_result["text"],
             answer=answer,
-            model=app.state.bedrock_client.model_id,
+            model=request.bedrock_model or app.state.bedrock_client.default_model_id,
             processing_time_ms=(time.time() - start_time) * 1000,
         )
 

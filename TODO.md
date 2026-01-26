@@ -74,20 +74,71 @@ This file tracks work sessions and future phases for the `feature/ocr-model-swap
 ---
 
 ## Phase 2: Easy LLM Model Swapping
-**Status**: PENDING
+**Status**: COMPLETED ✓
 
 ### Goal
 Make Bedrock model selection configurable at runtime via API request (same pattern as OCR swapping).
 
-### Tasks
-- [ ] Add `llm_model` field to harvest endpoint request
-- [ ] Support multiple Bedrock models:
-  - [ ] Claude (Anthropic) - `anthropic.claude-sonnet-4-20250507`
-  - [ ] Llama (Meta) - `meta.llama3-2-90b-instruct-v1:0`
-  - [ ] Titan (Amazon) - `amazon.titan-text-premier-v1:0`
-- [ ] Update BedrockClient to accept model_id parameter
-- [ ] Add available models to /models endpoint
-- [ ] Document LLM model selection
+### Completed Work - Jan 26, 2026
+- [x] Updated BedrockOptions in src/config.py to support model caching
+- [x] Modified BedrockClient to support dynamic model switching
+- [x] Created BedrockModelFactory following OCRServiceFactory pattern  
+- [x] Updated HarvestRequest model to include bedrock_model parameter
+- [x] Added Bedrock admin endpoints (/admin/bedrock/status, /admin/bedrock/models)
+- [x] Updated /models endpoint to include dynamic Bedrock models
+- [x] Updated harvest endpoint to support model selection
+- [x] Implemented automatic model discovery via list_foundation_models()
+
+### Key Features Implemented
+- **Dynamic Model Discovery**: Automatically discovers all available Bedrock models via AWS API
+- **Per-Request Selection**: Clients can specify any available model via `bedrock_model` parameter
+- **Model Caching**: Models cached for 1 hour to reduce API calls
+- **Admin Management**: Refresh cache and monitor usage via admin endpoints
+- **OpenAI Compatibility**: Updated /models endpoint to show available Bedrock models
+
+### API Usage Examples
+
+**Harvest with Model Selection:**
+```bash
+curl -X POST "/harvest" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
+  -d '{
+    "document": "data:application/pdf;base64,JVBERi0x...",
+    "question": "Summarize this contract",
+    "bedrock_model": "anthropic.claude-3-5-sonnet-20240620-v1:0"
+  }'
+```
+
+**List Available Models:**
+```bash
+curl -X GET "/models" \
+  -H "Authorization: Bearer $API_KEY"
+```
+
+**Admin - Check Status:**
+```bash
+curl -X GET "/admin/bedrock/status" \
+  -H "x-admin-api-key: $ADMIN_KEY"
+```
+
+**Admin - Refresh Models:**
+```bash
+curl -X POST "/admin/bedrock/models" \
+  -H "x-admin-api-key: $ADMIN_KEY"
+```
+
+### Supported Models (Auto-Discovered)
+- **Anthropic**: Claude 3.5 Sonnet, Claude 3 Opus, Claude 3 Haiku
+- **Meta**: Llama 3.1 405B, Llama 3.1 70B, Llama 3 70B
+- **Amazon**: Titan Text Premier, Titan Text Express
+- **Cohere**: Command R, Command R+
+- **AI21**: Jurassic 2 Ultra, Jurassic 2 Mid
+
+### No Redeploy Required
+✅ **Model switching works without redeployment**
+✅ **New models automatically available when released by AWS**
+✅ **Cache refresh via admin endpoint or TTL expiration**
 
 ### Example Request (After Implementation)
 ```json

@@ -7,9 +7,10 @@ This branch supports only AWS Bedrock. Ollama has been removed.
 
 import json
 import os
+import time
 import boto3
 import requests
-from typing import Optional, Generator, Dict, Any
+from typing import Optional, Generator, Dict, Any, List
 from abc import ABC, abstractmethod
 
 
@@ -62,9 +63,11 @@ class BedrockClient(LLMClient):
 
     def __init__(self, region: Optional[str] = None, model_id: Optional[str] = None):
         self.region = region or os.getenv("AWS_REGION", "eu-west-2")
-        self.model_id = model_id or os.getenv("BEDROCK_MODEL_ID", "")
+        self.default_model_id = model_id or os.getenv("BEDROCK_MODEL_ID", "")
+        self.current_model_id = self.default_model_id
         self.client = boto3.client("bedrock-runtime", region_name=self.region)
         self.sts = boto3.client("sts", region_name=self.region)
+        self.bedrock = boto3.client("bedrock", region_name=self.region)
 
     @property
     def name(self) -> str:
@@ -72,7 +75,36 @@ class BedrockClient(LLMClient):
 
     @property
     def default_model(self) -> str:
-        return self.model_id
+        return self.default_model_id
+
+    def set_model(self, model_id: str) -> bool:
+        """Set active model, return True if valid."""
+        self.current_model_id = model_id
+        return True
+
+    def get_available_models(self, filter_active: bool = True) -> List[Dict]:
+        """Get list of available Bedrock models."""
+        try:
+            response = self.bedrock.list_foundation_models()
+            models = response.get("modelSummaries", [])
+            
+            if filter_active:
+                models = [m for m in models if m.get("modelLifecycle", {}).get("status") == "ACTIVE"]
+                models = [m for m in models if "TEXT" in m.get("inputModalities", [])]
+                models = [m for m in models if "TEXT" in m.get("outputModalities", [])]
+            
+            return models
+        except Exception as e:
+            print(f"Error fetching Bedrock models: {e}")
+            return []
+
+    def validate_model(self, model_id: str) -> bool:
+        """Validate model ID against available models."""
+        if not model_id:
+            return False
+        
+        models = self.get_available_models()
+        return any(m["modelId"] == model_id for m in models)
 
     def is_available(self) -> bool:
         """Check if AWS credentials and Bedrock access are configured."""
@@ -83,13 +115,14 @@ class BedrockClient(LLMClient):
         except Exception:
             return False
 
-    def ask(
+def ask(
         self,
         text: str,
         question: str,
         system_prompt: Optional[str] = None,
         temperature: float = 0.0,
         stream: bool = False,
+        model_id: Optional[str] = None,
     ) -> str:
         """Send text and question to Bedrock, return answer."""
         if not self.is_available():
@@ -101,11 +134,17 @@ class BedrockClient(LLMClient):
         if stream:
             return self._handle_stream(text, question, system_prompt, temperature)
 
+# Set model for this request
+        if model_id:
+            if not self.validate_model(model_id):
+                raise ValueError(f"Invalid model ID: {model_id}")
+            self.set_model(model_id)
+        
         prompt = self._build_prompt(text, question, system_prompt)
 
         try:
             response = self.client.converse(
-                modelId=self.model_id,
+                modelId=self.current_model_id,
                 messages=[{"role": "user", "content": prompt}],
                 inferenceConfig={
                     "temperature": temperature,
@@ -120,19 +159,26 @@ class BedrockClient(LLMClient):
         except Exception as e:
             raise RuntimeError(f"Bedrock request failed: {str(e)}")
 
-    def stream(
+def stream(
         self,
         text: str,
         question: str,
         system_prompt: Optional[str] = None,
         temperature: float = 0.0,
+        model_id: Optional[str] = None,
     ) -> Generator[str, None, None]:
         """Stream Bedrock response chunk by chunk."""
+        # Set model for this request
+        if model_id:
+            if not self.validate_model(model_id):
+                raise ValueError(f"Invalid model ID: {model_id}")
+            self.set_model(model_id)
+        
         prompt = self._build_prompt(text, question, system_prompt)
 
         try:
             response = self.client.converse_stream(
-                modelId=self.model_id,
+                modelId=self.current_model_id,
                 messages=[{"role": "user", "content": prompt}],
                 inferenceConfig={
                     "temperature": temperature,
@@ -203,7 +249,7 @@ if __name__ == "__main__":
     client = BedrockClient()
     if client.is_available():
         print(f"Bedrock available in {client.region}")
-        print(f"Model: {client.model_id}")
+        print(f"Model: {client.default_model_id}")
     else:
         print(f"Bedrock not available in {client.region}")
         print("Configure AWS credentials with: aws configure")

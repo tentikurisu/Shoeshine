@@ -2,8 +2,8 @@
 
 import os
 from enum import Enum
-from typing import Optional
-from pydantic import BaseModel
+from typing import Optional, List, Dict
+from pydantic import BaseModel, Field
 
 
 class Environment(str, Enum):
@@ -39,6 +39,15 @@ class BedrockOptions(BaseModel):
     model_id: str = ""
     max_tokens: int = 4096
     temperature: float = 0.0
+    available_models: List[Dict] = Field(
+        default_factory=list, description="Cached list of available Bedrock models"
+    )
+    model_cache_ttl: int = Field(
+        3600, description="Cache available models for this many seconds"
+    )
+    last_cache_update: float = Field(
+        0.0, description="Timestamp of last model cache update"
+    )
 
 
 class StorageOptions(BaseModel):
