@@ -6,12 +6,36 @@ This branch supports only AWS Bedrock. Ollama has been removed.
 """
 
 import json
+import logging
 import os
+import re
 import time
 import boto3
 import requests
 from typing import Optional, Generator, Dict, Any, List
 from abc import ABC, abstractmethod
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+
+def validate_model_id_format(model_id: str) -> bool:
+    """Validate model ID format and prevent injection."""
+    if not model_id:
+        return False
+    
+    # Basic format validation
+    if len(model_id) > 100:
+        logger.warning(f"Model ID too long: {len(model_id)} chars")
+        return False
+    
+    # Prevent injection patterns - allow only safe characters
+    safe_pattern = re.compile(r'^[a-zA-Z0-9._:-]+$')
+    if not safe_pattern.match(model_id):
+        logger.warning(f"Invalid model ID format: {model_id}")
+        return False
+    
+    return True
 
 
 class LLMClient(ABC):
@@ -103,10 +127,30 @@ class BedrockClient(LLMClient):
         if not model_id:
             return False
         
+        # Security validation first
+        if not validate_model_id_format(model_id):
+            return False
+        
         models = self.get_available_models()
-        return any(m["modelId"] == model_id for m in models)
+        target_model = None
+        for model in models:
+            if model["modelId"] == model_id:
+                target_model = model
+                break
+        
+        if not target_model:
+            return False
+        
+        # Validate capabilities for document Q&A
+        input_modalities = target_model.get("inputModalities", [])
+        output_modalities = target_model.get("outputModalities", [])
+        
+        # Require text input/output and streaming support
+        return ("TEXT" in input_modalities and 
+                "TEXT" in output_modalities and
+                target_model.get("responseStreamingSupported", False))
 
-    def is_available(self) -> bool:
+def is_available(self) -> bool:
         """Check if AWS credentials and Bedrock access are configured."""
         try:
             self.sts.get_caller_identity()
@@ -115,7 +159,7 @@ class BedrockClient(LLMClient):
         except Exception:
             return False
 
-def ask(
+    def ask(
         self,
         text: str,
         question: str,
@@ -152,14 +196,17 @@ def ask(
                 },
             )
             return response["output"]["message"]["content"][0]["text"]
-        except self.client.exceptions.AccessDeniedException as e:
-            raise RuntimeError(f"Bedrock access denied: {str(e)}")
+except self.client.exceptions.AccessDeniedException as e:
+            logger.error(f"Bedrock access denied: {e}")
+            raise RuntimeError(f"Bedrock access denied")
         except self.client.exceptions.ValidationException as e:
-            raise RuntimeError(f"Bedrock validation error: {str(e)}")
+            logger.error(f"Bedrock validation error: {e}")
+            raise RuntimeError(f"Bedrock validation error")
         except Exception as e:
-            raise RuntimeError(f"Bedrock request failed: {str(e)}")
+            logger.error(f"Bedrock request failed: {e}")
+            raise RuntimeError(f"Bedrock request failed")
 
-def stream(
+    def stream(
         self,
         text: str,
         question: str,

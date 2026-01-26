@@ -36,7 +36,7 @@ class BedrockOptions(BaseModel):
     """AWS Bedrock configuration options."""
 
     region: str = "eu-west-2"
-    model_id: str = ""
+    model_id: str = "anthropic.claude-sonnet-4-20250507"
     max_tokens: int = 4096
     temperature: float = 0.0
     available_models: List[Dict] = Field(

@@ -643,9 +643,20 @@ class BedrockModelFactory:
             or not self.available_models
             or cache_age >= self.config.bedrock_model_cache_ttl
         ):
-            print("Refreshing Bedrock models cache...")
+print("Refreshing Bedrock models cache...")
             client = self._get_client()
-            self.available_models = client.get_available_models(filter_active=True)
+            
+            # Fetch models and filter efficiently in one API call
+            raw_models = client.get_available_models(filter_active=True)
+            
+            # Cache filtered results, not raw API response
+            self.available_models = [
+                model for model in raw_models
+                if "TEXT" in model.get("inputModalities", []) and
+                   "TEXT" in model.get("outputModalities", []) and
+                   model.get("responseStreamingSupported", False)
+            ]
+            
             self.last_cache_update = current_time
             print(f"Found {len(self.available_models)} available Bedrock models")
 
@@ -951,11 +962,16 @@ async def lifespan(app: FastAPI):
     print(f"  Allowed S3 Buckets: {config.allowed_s3_buckets or 'None specified'}")
     print(f"  Bedrock: {'Configured' if config.aws_region else 'Not configured'}")
 
-    app.state.ocr_factory = OCRServiceFactory()
+app.state.ocr_factory = OCRServiceFactory()
     app.state.config = config
     print(f"  OCR Factory: Initialized")
 
     app.state.bedrock_service = BedrockService()
+    app.state.bedrock_factory = BedrockModelFactory(config)
+    app.state.bedrock_client = BedrockClient(
+        region=config.bedrock_region,
+        model_id=config.bedrock_model_id
+    )
     bedrock_status = (
         "Available" if app.state.bedrock_service.is_available() else "Not configured"
     )
