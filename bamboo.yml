@@ -1,3 +1,4 @@
+# Updated for Bamboo specs detection
 version: 2
 plan:
   project-key: SHOESHINE
@@ -309,3 +310,4 @@ SmokeTest:
 #   aws_secret_key = (your IAM secret key)
 #   api_key = (your Shoeshine API key)
 #   bedrock_model_id = anthropic.claude-sonnet-4-20250507
+# Bamboo CI/CD Pipeline - Updated Tue Jan 27 13:53:16 GMTST 2026$
