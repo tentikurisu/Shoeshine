@@ -111,66 +111,97 @@ RunTests:
 # ============================================================================
 TerraformApply:
   key: TerraformApply
-  description: Apply Terraform infrastructure
+  description: Apply Terraform infrastructure using Docker container
   tasks:
     - checkout:
         path: infra/terraform
     - script:
-        key: TerraformInit
-        description: Initialize Terraform
+        key: SetPermissions
+        description: Set directory permissions for Docker
         interpreter: bash
         scripts:
           - |
             #!/bin/bash
             set -e
-            
             echo "=========================================="
-            echo "📦 Initializing Terraform..."
+            echo "🔧 Setting directory permissions..."
             echo "=========================================="
-            
-            cd infra/terraform
-            terraform init
-            
-            echo "✅ Terraform initialized successfully!"
+            chmod -R 777 infra/terraform
     - script:
-        key: TerraformPlan
-        description: Plan Terraform changes
+        key: BuildTerraformImage
+        description: Build Terraform Docker image
         interpreter: bash
         scripts:
           - |
             #!/bin/bash
             set -e
-            
             echo "=========================================="
-            echo "📋 Planning infrastructure changes..."
+            echo "🐳 Building Terraform Docker image..."
             echo "=========================================="
-            
             cd infra/terraform
-            terraform plan \
-              -var="aws_region=${bamboo.aws_region:-eu-west-2}" \
-              -var="environment=${bamboo.environment:-production}" \
-              -var="api_key=${bamboo.api_key}" \
-              -var="bedrock_model_id=${bamboo.bedrock_model_id}" \
-              -out=tfplan
-            
-            echo "✅ Terraform plan created successfully!"
+            docker build -t local:terraform .
     - script:
-        key: TerraformApply
-        description: Apply Terraform changes
+        key: TerraformInitDocker
+        description: Run Terraform init in Docker container
         interpreter: bash
         scripts:
           - |
             #!/bin/bash
             set -e
-            
             echo "=========================================="
-            echo "🏗️  Applying infrastructure..."
+            echo "📦 Running Terraform init in Docker..."
             echo "=========================================="
-            
             cd infra/terraform
-            terraform apply -auto-approve tfplan
-            
-            echo "✅ Infrastructure applied successfully!"
+            docker run --rm \
+              -v $(pwd):/app \
+              -w /app \
+              local:terraform \
+              terraform init
+    - script:
+        key: TerraformPlanDocker
+        description: Run Terraform plan in Docker container
+        interpreter: bash
+        scripts:
+          - |
+            #!/bin/bash
+            set -e
+            echo "=========================================="
+            echo "📋 Running Terraform plan in Docker..."
+            echo "=========================================="
+            cd infra/terraform
+            docker run --rm \
+              -v $(pwd):/app \
+              -w /app \
+              -e AWS_ACCESS_KEY_ID=${bamboo.aws_access_key} \
+              -e AWS_SECRET_ACCESS_KEY=${bamboo.aws_secret_key} \
+              -e AWS_REGION=${bamboo.aws_region:-eu-west-2} \
+              local:terraform \
+              terraform plan \
+                -var="aws_region=${bamboo.aws_region:-eu-west-2}" \
+                -var="environment=${bamboo.environment:-production}" \
+                -var="api_key=${bamboo.api_key}" \
+                -var="bedrock_model_id=${bamboo.bedrock_model_id}" \
+                -out=tfplan
+    - script:
+        key: TerraformApplyDocker
+        description: Run Terraform apply in Docker container
+        interpreter: bash
+        scripts:
+          - |
+            #!/bin/bash
+            set -e
+            echo "=========================================="
+            echo "🏗️  Running Terraform apply in Docker..."
+            echo "=========================================="
+            cd infra/terraform
+            docker run --rm \
+              -v $(pwd):/app \
+              -w /app \
+              -e AWS_ACCESS_KEY_ID=${bamboo.aws_access_key} \
+              -e AWS_SECRET_ACCESS_KEY=${bamboo.aws_secret_key} \
+              -e AWS_REGION=${bamboo.aws_region:-eu-west-2} \
+              local:terraform \
+              terraform apply -auto-approve tfplan
 
 # ============================================================================
 # DEPLOY JOB
