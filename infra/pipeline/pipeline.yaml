@@ -1,0 +1,277 @@
+version: 2
+plan:
+  project-key: SHOESHINE
+  key: LAMBDA
+  name: Shoeshine Lambda Deployment
+
+stages:
+  - Build
+  - Test
+  - Infrastructure
+  - Deploy
+  - Validate
+
+Build:
+  jobs:
+    - BuildImage
+
+Test:
+  jobs:
+    - RunTests
+
+Infrastructure:
+  jobs:
+    - TerraformApply
+
+Deploy:
+  jobs:
+    - DeployLambda
+
+Validate:
+  jobs:
+    - SmokeTest
+
+# ============================================================================
+# BUILD JOB
+# ============================================================================
+BuildImage:
+  key: BuildImage
+  description: Build and push Docker image to ECR
+  tasks:
+    - checkout
+    - script:
+        key: BuildDocker
+        description: Build and push Docker image to ECR
+        interpreter: bash
+        scripts:
+          - |
+            #!/bin/bash
+            set -e
+            
+            echo "=========================================="
+            echo "🏗️  Building Docker image for Lambda..."
+            echo "=========================================="
+            
+            # Build Docker image using Lambda Dockerfile
+            docker build -t shoeshine:latest -f Dockerfile.lambda .
+            
+            # Get AWS account ID and region
+            AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            AWS_REGION=${bamboo.aws_region:-eu-west-2}
+            ECR_REPO="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${bamboo.ecr_repo_name:-shoeshine}"
+            
+            echo "📦 ECR Repository: ${ECR_REPO}"
+            echo "=========================================="
+            
+            # Tag images
+            docker tag shoeshine:latest ${ECR_REPO}:latest
+            docker tag shoeshine:latest ${ECR_REPO}:bamboo-${bamboo.planRepository.revision}
+            
+            echo "🔐 Logging into ECR..."
+            # Login to ECR
+            aws ecr get-login-password --region ${AWS_REGION} | \
+              docker login --username AWS --password-stdin ${ECR_REPO}
+            
+            echo "🚀 Pushing images to ECR..."
+            # Push to ECR
+            docker push ${ECR_REPO}:latest
+            docker push ${ECR_REPO}:bamboo-${bamboo.planRepository.revision}
+            
+            echo "✅ Docker image built and pushed successfully!"
+            echo "   Image: ${ECR_REPO}:latest"
+            echo "   Revision: bamboo-${bamboo.planRepository.revision}"
+
+# ============================================================================
+# TEST JOB
+# ============================================================================
+RunTests:
+  key: RunTests
+  description: Run unit and integration tests
+  tasks:
+    - checkout
+    - script:
+        key: RunPytest
+        description: Run pytest tests
+        interpreter: bash
+        scripts:
+          - |
+            #!/bin/bash
+            set -e
+            
+            echo "=========================================="
+            echo "🧪 Running tests..."
+            echo "=========================================="
+            
+            python -m pytest tests/ -v --tb=short
+            
+            echo "✅ All tests passed!"
+
+# ============================================================================
+# INFRASTRUCTURE JOB
+# ============================================================================
+TerraformApply:
+  key: TerraformApply
+  description: Apply Terraform infrastructure
+  tasks:
+    - checkout:
+        path: infra/terraform
+    - script:
+        key: TerraformInit
+        description: Initialize Terraform
+        interpreter: bash
+        scripts:
+          - |
+            #!/bin/bash
+            set -e
+            
+            echo "=========================================="
+            echo "📦 Initializing Terraform..."
+            echo "=========================================="
+            
+            cd infra/terraform
+            terraform init
+            
+            echo "✅ Terraform initialized successfully!"
+    - script:
+        key: TerraformPlan
+        description: Plan Terraform changes
+        interpreter: bash
+        scripts:
+          - |
+            #!/bin/bash
+            set -e
+            
+            echo "=========================================="
+            echo "📋 Planning infrastructure changes..."
+            echo "=========================================="
+            
+            cd infra/terraform
+            terraform plan \
+              -var="aws_region=${bamboo.aws_region:-eu-west-2}" \
+              -var="environment=${bamboo.environment:-production}" \
+              -var="api_key=${bamboo.api_key}" \
+              -var="bedrock_model_id=${bamboo.bedrock_model_id}" \
+              -out=tfplan
+            
+            echo "✅ Terraform plan created successfully!"
+    - script:
+        key: TerraformApply
+        description: Apply Terraform changes
+        interpreter: bash
+        scripts:
+          - |
+            #!/bin/bash
+            set -e
+            
+            echo "=========================================="
+            echo "🏗️  Applying infrastructure..."
+            echo "=========================================="
+            
+            cd infra/terraform
+            terraform apply -auto-approve tfplan
+            
+            echo "✅ Infrastructure applied successfully!"
+
+# ============================================================================
+# DEPLOY JOB
+# ============================================================================
+DeployLambda:
+  key: DeployLambda
+  description: Deploy Lambda function
+  tasks:
+    - script:
+        key: UpdateLambda
+        description: Update Lambda with new Docker image
+        interpreter: bash
+        scripts:
+          - |
+            #!/bin/bash
+            set -e
+            
+            echo "=========================================="
+            echo "🔄 Updating Lambda function..."
+            echo "=========================================="
+            
+            AWS_REGION=${bamboo.aws_region:-eu-west-2}
+            LAMBDA_FUNC_NAME=${bamboo.lambda_func_name:-shoeshine-lambda}
+            ECR_REPO="${bamboo.aws_account_id}.dkr.ecr.${AWS_REGION}.amazonaws.com/${bamboo.ecr_repo_name:-shoeshine}"
+            
+            echo "Lambda Function: ${LAMBDA_FUNC_NAME}"
+            echo "Image URI: ${ECR_REPO}:latest"
+            echo "=========================================="
+            
+            # Update Lambda function code
+            aws lambda update-function-code \
+              --function-name ${LAMBDA_FUNC_NAME} \
+              --image-uri ${ECR_REPO}:latest \
+              --region ${AWS_REGION}
+            
+            echo "⏳ Waiting for Lambda update to complete..."
+            # Wait for update to complete
+            aws lambda wait function-updated \
+              --function-name ${LAMBDA_FUNC_NAME} \
+              --region ${AWS_REGION}
+            
+            echo "✅ Lambda function updated successfully!"
+
+# ============================================================================
+# VALIDATE JOB
+# ============================================================================
+SmokeTest:
+  key: SmokeTest
+  description: Verify deployment with health check
+  tasks:
+    - script:
+        key: HealthCheck
+        description: Check API health endpoint
+        interpreter: bash
+        scripts:
+          - |
+            #!/bin/bash
+            set -e
+            
+            echo "=========================================="
+            echo "🔍 Running smoke tests..."
+            echo "=========================================="
+            
+            API_ENDPOINT=${bamboo.api_endpoint}
+            
+            echo "API Endpoint: ${API_ENDPOINT}"
+            echo "⏱️  Waiting for deployment to stabilize..."
+            sleep 30
+            
+            echo "🔍 Checking health endpoint..."
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" ${API_ENDPOINT}/health)
+            
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "=========================================="
+              echo "✅ SUCCESS - Health check passed!"
+              echo "   HTTP Status Code: ${HTTP_CODE}"
+              echo "   API Endpoint: ${API_ENDPOINT}"
+              echo "=========================================="
+            else
+              echo "=========================================="
+              echo "❌ FAILED - Health check failed!"
+              echo "   HTTP Status Code: ${HTTP_CODE}"
+              echo "   Expected: 200"
+              echo "=========================================="
+              exit 1
+            fi
+
+# ============================================================================
+# CONFIGURATION VARIABLES
+# ============================================================================
+# These are configured in Bamboo Plan Settings -> Variables
+#
+# Plain variables (visible):
+#   aws_region = eu-west-2
+#   environment = production
+#   ecr_repo_name = shoeshine
+#   lambda_func_name = shoeshine-lambda
+#   api_endpoint = https://xxxxx.execute-api.eu-west-1.amazonaws.com/prod
+#
+# Secure variables (masked):
+#   aws_access_key = (your IAM access key)
+#   aws_secret_key = (your IAM secret key)
+#   api_key = (your Shoeshine API key)
+#   bedrock_model_id = anthropic.claude-sonnet-4-20250507

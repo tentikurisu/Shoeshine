@@ -48,3 +48,18 @@ README_AWS.md
 DEPLOYMENT.md
 DEPLOY_LAMBDA.md
 PRIVACY.md
+
+# Bamboo artifacts
+infra/terraform/tfplan
+infra/terraform/.terraform/
+*.terraform.lock.hcl
+
+# Terraform state
+*.tfstate
+*.tfstate.backup
+terraform.tfstate
+terraform.tfstate.backup
+
+# Local Terraform config (contains secrets)
+infra/terraform/terraform.tfvars
+
