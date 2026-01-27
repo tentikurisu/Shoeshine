@@ -1,4 +1,5 @@
 version: 2
+
 plan:
   project-key: SHOESHINE
   key: LAMBDA
@@ -7,171 +8,138 @@ plan:
 stages:
   - Build:
       jobs:
-        - BuildImage
+        - BUILD
   - Test:
       jobs:
-        - RunTests
+        - TEST
   - Infrastructure:
       jobs:
-        - TerraformApply
+        - TFAP
   - Deploy:
       jobs:
-        - DeployLambda
+        - DEPL
   - Validate:
       jobs:
-        - SmokeTest
+        - SMOK
 
 jobs:
-  - BuildImage:
-      key: BuildImage
+  - Build Image:
+      key: BUILD
       description: Build and push Docker image to ECR
       tasks:
         - checkout
         - script:
-            key: BuildDocker
             description: Build and push Docker image to ECR
-            interpreter: bash
+            interpreter: BINSH_OR_CMDEXE
             scripts:
               - |
-                #!/bin/bash
                 set -e
                 docker build -t shoeshine:latest -f Dockerfile.lambda .
+
                 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-                AWS_REGION=${bamboo.aws_region:-eu-west-2}
-                ECR_REPO="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${bamboo.ecr_repo_name:-shoeshine}"
+                AWS_REGION=${bamboo.aws_region}
+                ECR_REPO="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${bamboo.ecr_repo_name}"
+
                 docker tag shoeshine:latest ${ECR_REPO}:latest
                 docker tag shoeshine:latest ${ECR_REPO}:bamboo-${bamboo.planRepository.revision}
-                aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO}
+
+                aws ecr get-login-password --region ${AWS_REGION} | \
+                  docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+
                 docker push ${ECR_REPO}:latest
                 docker push ${ECR_REPO}:bamboo-${bamboo.planRepository.revision}
 
-  - RunTests:
-      key: RunTests
+  - Run Tests:
+      key: TEST
       description: Run unit and integration tests
       tasks:
         - checkout
         - script:
-            key: RunPytest
-            description: Run pytest tests
-            interpreter: bash
+            description: Run pytest
+            interpreter: BINSH_OR_CMDEXE
             scripts:
               - |
-                #!/bin/bash
                 set -e
                 python -m pytest tests/ -v --tb=short
 
-  - TerraformApply:
-      key: TerraformApply
+  - Terraform Apply:
+      key: TFAP
       description: Apply Terraform infrastructure using Docker container
       tasks:
-        - checkout:
-            path: infra/terraform
+        - checkout
         - script:
-            key: SetPermissions
-            description: Set directory permissions for Docker
-            interpreter: bash
+            description: Terraform init/plan/apply in Docker
+            interpreter: BINSH_OR_CMDEXE
             scripts:
               - |
-                #!/bin/bash
-                set -e
-                chmod -R 777 infra/terraform
-        - script:
-            key: BuildTerraformImage
-            description: Build Terraform Docker image
-            interpreter: bash
-            scripts:
-              - |
-                #!/bin/bash
                 set -e
                 cd infra/terraform
                 docker build -t local:terraform .
-        - script:
-            key: TerraformInitDocker
-            description: Run Terraform init in Docker container
-            interpreter: bash
-            scripts:
-              - |
-                #!/bin/bash
-                set -e
-                cd infra/terraform
-                docker run --rm -v $(pwd):/app -w /app local:terraform terraform init
-        - script:
-            key: TerraformPlanDocker
-            description: Run Terraform plan in Docker container
-            interpreter: bash
-            scripts:
-              - |
-                #!/bin/bash
-                set -e
-                cd infra/terraform
-                docker run --rm -v $(pwd):/app -w /app \
+
+                docker run --rm \
+                  -v "$(pwd)":/app \
+                  -w /app \
                   -e AWS_ACCESS_KEY_ID=${bamboo.aws_access_key} \
                   -e AWS_SECRET_ACCESS_KEY=${bamboo.aws_secret_key} \
-                  -e AWS_REGION=${bamboo.aws_region:-eu-west-2} \
-                  local:terraform \
-                  terraform plan \
-                    -var="aws_region=${bamboo.aws_region:-eu-west-2}" \
-                    -var="environment=${bamboo.environment:-production}" \
+                  -e AWS_REGION=${bamboo.aws_region} \
+                  local:terraform terraform init
+
+                docker run --rm \
+                  -v "$(pwd)":/app \
+                  -w /app \
+                  -e AWS_ACCESS_KEY_ID=${bamboo.aws_access_key} \
+                  -e AWS_SECRET_ACCESS_KEY=${bamboo.aws_secret_key} \
+                  -e AWS_REGION=${bamboo.aws_region} \
+                  local:terraform terraform plan \
+                    -var="aws_region=${bamboo.aws_region}" \
+                    -var="environment=${bamboo.environment}" \
                     -var="api_key=${bamboo.api_key}" \
                     -var="bedrock_model_id=${bamboo.bedrock_model_id}" \
                     -out=tfplan
-        - script:
-            key: TerraformApplyDocker
-            description: Run Terraform apply in Docker container
-            interpreter: bash
-            scripts:
-              - |
-                #!/bin/bash
-                set -e
-                cd infra/terraform
-                docker run --rm -v $(pwd):/app -w /app \
+
+                docker run --rm \
+                  -v "$(pwd)":/app \
+                  -w /app \
                   -e AWS_ACCESS_KEY_ID=${bamboo.aws_access_key} \
                   -e AWS_SECRET_ACCESS_KEY=${bamboo.aws_secret_key} \
-                  -e AWS_REGION=${bamboo.aws_region:-eu-west-2} \
-                  local:terraform \
-                  terraform apply -auto-approve tfplan
+                  -e AWS_REGION=${bamboo.aws_region} \
+                  local:terraform terraform apply -auto-approve tfplan
 
-  - DeployLambda:
-      key: DeployLambda
+  - Deploy Lambda:
+      key: DEPL
       description: Deploy Lambda function
       tasks:
+        - checkout
         - script:
-            key: UpdateLambda
-            description: Update Lambda with new Docker image
-            interpreter: bash
+            description: Update Lambda to latest ECR image
+            interpreter: BINSH_OR_CMDEXE
             scripts:
               - |
-                #!/bin/bash
                 set -e
-                AWS_REGION=${bamboo.aws_region:-eu-west-2}
-                LAMBDA_FUNC_NAME=${bamboo.lambda_func_name:-shoeshine-lambda}
-                ECR_REPO="${bamboo.aws_account_id}.dkr.ecr.${AWS_REGION}.amazonaws.com/${bamboo.ecr_repo_name:-shoeshine}"
+                AWS_REGION=${bamboo.aws_region}
+                LAMBDA_FUNC_NAME=${bamboo.lambda_func_name}
+                ECR_REPO="${bamboo.aws_account_id}.dkr.ecr.${AWS_REGION}.amazonaws.com/${bamboo.ecr_repo_name}"
+
                 aws lambda update-function-code \
                   --function-name ${LAMBDA_FUNC_NAME} \
                   --image-uri ${ECR_REPO}:latest \
                   --region ${AWS_REGION}
+
                 aws lambda wait function-updated \
                   --function-name ${LAMBDA_FUNC_NAME} \
                   --region ${AWS_REGION}
 
-  - SmokeTest:
-      key: SmokeTest
+  - Smoke Test:
+      key: SMOK
       description: Verify deployment with health check
       tasks:
+        - checkout
         - script:
-            key: HealthCheck
-            description: Check API health endpoint
-            interpreter: bash
+            description: Health check
+            interpreter: BINSH_OR_CMDEXE
             scripts:
               - |
-                #!/bin/bash
                 set -e
-                API_ENDPOINT=${bamboo.api_endpoint}
                 sleep 30
-                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" ${API_ENDPOINT}/health)
-                if [ "$HTTP_CODE" = "200" ]; then
-                  echo "Health check passed: ${HTTP_CODE}"
-                else
-                  echo "Health check failed: ${HTTP_CODE}"
-                  exit 1
-                fi
+                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" ${bamboo.api_endpoint}/health)
+                test "$HTTP_CODE" = "200"
